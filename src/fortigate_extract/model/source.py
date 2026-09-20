@@ -32,6 +32,7 @@ from .vpn_ssl import (
     FGSSLVPNSettings,
 )
 from .zone import FGZone
+from .external_resource import FGExternalResource
 
 
 class FGConfig(BaseModel):

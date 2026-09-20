@@ -1,20 +1,31 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import click
 
-from config import ExtractionConfig
-from parser import parse_fortigate_config
-from extraction.extractor import extract_fortigate_config
-from validation.validator import validate_config
-from export.excel import export_excel
+from .config import ExtractionConfig
+from .derived import (
+    DerivedViews,
+    build_derived_views,
+)
+from .extraction.extractor import (
+    extract_fortigate_config,
+)
+from .model.source import FGConfig
+from .parser import parse_fortigate_config
+from .report import write_report_database
+from .validation.models import ValidationResult
+from .validation.validator import validate_config
 
 
 @click.group()
 def cli() -> None:
-    """Extract FortiGate configuration into structured Excel reports."""
+    """
+    Extract and analyze FortiGate configuration.
+
+    Results are persisted as a SQLite-backed FortiGate report.
+    """
 
 
 @cli.command()
@@ -39,7 +50,10 @@ def cli() -> None:
         dir_okay=False,
         path_type=Path,
     ),
-    help="Output Excel file (.xlsx).",
+    help=(
+        "Output FortiGate report database "
+        "(.fgreport or .db)."
+    ),
 )
 @click.option(
     "--config",
@@ -57,77 +71,105 @@ def extract(
     output_path: Path,
     config_path: Path | None,
 ) -> None:
-    """Extract a FortiGate configuration to Excel."""
+    """
+    Parse, extract, analyze, validate, and persist a FortiGate report.
+    """
 
     try:
-        extraction_config = (
-            ExtractionConfig.from_yaml(config_path)
-            if config_path
-            else ExtractionConfig()
+        extraction_config = _load_config(
+            config_path
         )
 
         # --------------------------------------------------------------
-        # 1. Read source configuration
+        # 1. Read source
         # --------------------------------------------------------------
 
-        click.echo(f"Reading: {input_path}")
+        click.echo(
+            f"Reading: {input_path}"
+        )
 
-        text = input_path.read_text(
+        source_text = input_path.read_text(
             encoding=extraction_config.encoding,
         )
 
         # --------------------------------------------------------------
-        # 2. Parse CLI syntax into structural tree
+        # 2. Parse FortiGate CLI structure
         # --------------------------------------------------------------
-
-        click.echo("Parsing FortiGate configuration...")
-
-        tree = parse_fortigate_config(text)
 
         click.echo(
-            f"  Parsed {len(tree.configs)} top-level config sections."
+            "Parsing FortiGate configuration..."
         )
 
-        if tree.source_version:
-            version_text = tree.source_version
+        tree = parse_fortigate_config(
+            source_text
+        )
 
-            if tree.source_build:
-                version_text += f" build {tree.source_build}"
+        click.echo(
+            "  Parsed "
+            f"{len(tree.configs)} "
+            "top-level config sections."
+        )
 
-            click.echo(f"  FortiOS: {version_text}")
+        if tree.unknown_commands:
+            click.echo(
+                "  Preserved "
+                f"{len(tree.unknown_commands)} "
+                "unknown root command(s)."
+            )
 
         # --------------------------------------------------------------
-        # 3. Extract FortiGate source models
+        # 3. Extract explicit FortiGate source objects
         # --------------------------------------------------------------
 
-        click.echo("Extracting FortiGate objects...")
+        click.echo(
+            "Extracting FortiGate objects..."
+        )
 
         extracted = extract_fortigate_config(
             tree,
             config=extraction_config,
         )
 
+        source_config = extracted.config
+
         # --------------------------------------------------------------
-        # 4. Validate extracted configuration
+        # 4. Build derived relationships / migration views
         # --------------------------------------------------------------
 
-        click.echo("Validating extracted objects...")
+        click.echo(
+            "Resolving relationships and "
+            "building derived views..."
+        )
 
-        validation = validate_config(
-            extracted.config,
+        derived = build_derived_views(
+            source_config
         )
 
         # --------------------------------------------------------------
-        # 5. Print summary
+        # 5. Validate
+        # --------------------------------------------------------------
+
+        click.echo(
+            "Validating extracted configuration..."
+        )
+
+        validation = validate_config(
+            source_config,
+            derived=derived,
+        )
+
+        # --------------------------------------------------------------
+        # 6. Print summary
         # --------------------------------------------------------------
 
         _print_summary(
-            extracted,
+            source_config,
+            derived,
             validation,
         )
 
         # --------------------------------------------------------------
-        # 6. Export Excel
+        # 7. Write SQLite report
         # --------------------------------------------------------------
 
         output_path.parent.mkdir(
@@ -135,71 +177,272 @@ def extract(
             exist_ok=True,
         )
 
-        click.echo(f"Writing Excel report: {output_path}")
-
-        export_excel(
-            extracted=extracted,
-            validation=validation,
-            output_path=output_path,
-            config=extraction_config,
+        click.echo("")
+        click.echo(
+            f"Writing report: {output_path}"
         )
 
-        click.echo("Extraction complete.")
+        write_report_database(
+            output_path,
+            config=source_config,
+            derived=derived,
+            validation=validation,
+            source_name=input_path.name,
+        )
+
+        click.echo(
+            "Report generation complete."
+        )
+
+    except (
+        OSError,
+        UnicodeError,
+        ValueError,
+    ) as exc:
+        _fail(
+            str(exc)
+        )
 
     except Exception as exc:
-        click.echo(
-            f"Extraction failed: {exc}",
-            err=True,
-        )
+        # Keep unexpected failures visible while still presenting
+        # a concise CLI error to the user.
+        raise click.ClickException(
+            f"Report generation failed: {exc}"
+        ) from exc
 
-        raise click.Abort() from exc
+
+def _load_config(
+    config_path: Path | None,
+) -> ExtractionConfig:
+    if config_path is None:
+        return ExtractionConfig()
+
+    return ExtractionConfig.from_yaml(
+        config_path
+    )
 
 
 def _print_summary(
-    extracted,
-    validation,
+    config: FGConfig,
+    derived: DerivedViews,
+    validation: ValidationResult,
 ) -> None:
-    """Print a compact extraction summary."""
+    click.echo("")
+    click.echo("FortiGate analysis summary")
+    click.echo("--------------------------")
 
-    config = extracted.config
+    source_counts = (
+        (
+            "Interfaces",
+            len(config.interfaces),
+        ),
+        (
+            "Zones",
+            len(config.zones),
+        ),
+        (
+            "Addresses",
+            len(config.addresses),
+        ),
+        (
+            "Address Groups",
+            len(config.address_groups),
+        ),
+        (
+            "Wildcard FQDNs",
+            len(config.wildcard_fqdns),
+        ),
+        (
+            "Services",
+            len(config.services),
+        ),
+        (
+            "Service Groups",
+            len(config.service_groups),
+        ),
+        (
+            "Policies",
+            len(config.policies),
+        ),
+        (
+            "IP Pools",
+            len(config.ip_pools),
+        ),
+        (
+            "VIPs",
+            len(config.vips),
+        ),
+        (
+            "VIP Groups",
+            len(config.vip_groups),
+        ),
+        (
+            "Static Routes",
+            len(config.static_routes),
+        ),
+        (
+            "IPsec Phase 1",
+            len(config.ipsec_phase1),
+        ),
+        (
+            "IPsec Phase 2",
+            len(config.ipsec_phase2),
+        ),
+        (
+            "DHCP Servers",
+            len(config.dhcp_servers),
+        ),
+        (
+            "SD-WAN",
+            len(config.sdwans),
+        ),
+        (
+            "SSL VPN Settings",
+            len(config.ssl_vpn_settings),
+        ),
+        (
+            "SSL VPN Portals",
+            len(config.ssl_vpn_portals),
+        ),
+        (
+            "Local Users",
+            len(config.local_users),
+        ),
+        (
+            "User Groups",
+            len(config.user_groups),
+        ),
+        (
+            "Administrators",
+            len(config.administrators),
+        ),
+        (
+            "Admin Profiles",
+            len(config.admin_profiles),
+        ),
+        (
+            "IPS Sensors",
+            len(config.ips_sensors),
+        ),
+        (
+            "Security Profile Groups",
+            len(config.profile_groups),
+        ),
+        (
+            "External Resources",
+            len(config.external_resources),
+        ),
+    )
 
-    counts = {
-        "Interfaces": len(config.interfaces),
-        "Zones": len(config.zones),
-        "Addresses": len(config.addresses),
-        "Address Groups": len(config.address_groups),
-        "Services": len(config.services),
-        "Service Groups": len(config.service_groups),
-        "Policies": len(config.policies),
-        "IP Pools": len(config.ip_pools),
-        "VIPs": len(config.vips),
-        "VIP Groups": len(config.vip_groups),
-        "Static Routes": len(config.static_routes),
-        "IPsec Phase 1": len(config.ipsec_phase1),
-        "IPsec Phase 2": len(config.ipsec_phase2),
-        "DHCP Servers": len(config.dhcp_servers),
-        "Users": len(config.local_users),
-        "User Groups": len(config.user_groups),
-        "Administrators": len(config.administrators),
-        "Admin Profiles": len(config.admin_profiles),
-        "IPS Sensors": len(config.ips_sensors),
-        "Profile Groups": len(config.profile_groups),
-    }
+    for label, count in source_counts:
+        if count:
+            click.echo(
+                f"  {label:<28} {count}"
+            )
+
+    # --------------------------------------------------------------
+    # Derived output
+    # --------------------------------------------------------------
 
     click.echo("")
-    click.echo("Extraction summary")
+    click.echo("Derived views")
 
-    for label, count in counts.items():
+    derived_counts = (
+        (
+            "Interface Topology",
+            len(
+                derived.topology.interfaces
+            ),
+        ),
+        (
+            "VPN Topology",
+            len(
+                derived.topology.vpns
+            ),
+        ),
+        (
+            "Normalized Services",
+            len(
+                derived.services.services
+            ),
+        ),
+        (
+            "Normalized Service Groups",
+            len(
+                derived.services.groups
+            ),
+        ),
+        (
+            "NAT Rules",
+            len(
+                derived.nat
+            ),
+        ),
+        (
+            "Normalized Policy Names",
+            len(
+                derived.policy_names
+            ),
+        ),
+        (
+            "Normalized VPN Phase 2",
+            len(
+                derived.vpn.phase2
+            ),
+        ),
+    )
+
+    for label, count in derived_counts:
         if count:
-            click.echo(f"  {label:<20} {count}")
+            click.echo(
+                f"  {label:<28} {count}"
+            )
 
-    issues = getattr(validation, "issues", [])
+    # --------------------------------------------------------------
+    # Validation
+    # --------------------------------------------------------------
 
-    if issues:
-        click.echo("")
+    error_count = len(
+        validation.errors
+    )
+
+    warning_count = len(
+        validation.warnings
+    )
+
+    click.echo("")
+    click.echo("Validation")
+
+    click.echo(
+        f"  {'Errors':<28} "
+        f"{error_count}"
+    )
+
+    click.echo(
+        f"  {'Warnings':<28} "
+        f"{warning_count}"
+    )
+
+    # Duplicate names detected while building reference indexes
+    # are useful to expose separately because they can affect
+    # relationship resolution.
+    duplicate_count = len(
+        derived.references.duplicates
+    )
+
+    if duplicate_count:
         click.echo(
-            f"Validation issues: {len(issues)}"
+            f"  {'Duplicate objects':<28} "
+            f"{duplicate_count}"
         )
+
+
+def _fail(
+    message: str,
+) -> None:
+    raise click.ClickException(
+        f"Report generation failed: {message}"
+    )
 
 
 if __name__ == "__main__":

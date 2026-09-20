@@ -1,251 +1,306 @@
-import heapq
-import ipaddress
-from typing import Dict, List, Optional
-from fwmigrate.ir import IRConfig
-from fwmigrate.ir.enums import AddressType
-from fwmigrate.ir.index import IRIndex
-from fwmigrate.core.constants import UNIVERSAL_KEYWORDS
-from fwmigrate.validation.models import ValidationIssue, ValidationResult
+from __future__ import annotations
 
-_UNIVERSAL_KEYWORDS = {keyword.casefold() for keyword in UNIVERSAL_KEYWORDS}
+from ..derived import (
+    DerivedViews,
+    build_derived_views,
+)
+from ..model.source import FGConfig
+from ..relationships.references import (
+    BrokenReference,
+    DuplicateObject,
+    collect_broken_references,
+)
 
-class Validator:
-    """Base class for validation passes."""
-    def validate(self, ir_config: IRConfig) -> List[ValidationIssue]:
-        raise NotImplementedError
+from .models import (
+    ValidationIssue,
+    ValidationResult,
+    ValidationSeverity,
+)
 
-class DependencyValidator(Validator):
+
+def validate_config(
+    config: FGConfig,
+    *,
+    derived: DerivedViews | None = None,
+) -> ValidationResult:
     """
-    Ensures referential integrity across the IR.
-    E.g., Policies must only reference valid zones, addresses, and services.
+    Validate extracted FortiGate source objects and derived views.
+
+    Validation responsibilities:
+        - duplicate migration-relevant source objects
+        - broken source references
+        - unresolved interface/VPN topology
+        - service-normalization issues
+        - NAT derivation issues
+        - normalized policy-name collisions
+        - VPN selector normalization issues
+
+    Validation does not:
+        - mutate FGConfig
+        - mutate DerivedViews
+        - apply FortiOS defaults
+        - silently repair configuration
+        - generate target-vendor configuration
     """
-    def __init__(self, ir_index: Optional[IRIndex] = None):
-        self.ir_index = ir_index
 
-    def validate(self, ir_config: IRConfig) -> List[ValidationIssue]:
-        issues = []
-        index = self.ir_index or IRIndex.build(ir_config)
-        known_zones = set(index.by_name.get("zones", {}))
-        known_addresses = set(index.by_name.get("addresses", {}))
-        known_address_groups = set(index.by_name.get("address_groups", {}))
-        all_address_objects = known_addresses.union(known_address_groups)
-        known_services = set(index.by_name.get("services", {}))
-        known_service_groups = set(index.by_name.get("service_groups", {}))
-        all_service_objects = known_services.union(known_service_groups)
-        
-        # Phase 14: PAN Builtin/Predefined namespaces
-        pan_builtin_tokens = {"any", "all", "none"}
-        pan_predefined_services = {"service-http", "service-https"}
-        
-        is_panos = False
-        if hasattr(ir_config, "metadata") and ir_config.metadata:
-            is_panos = getattr(ir_config.metadata, "source_vendor", None) == "palo_alto"
-        
-        # Check Address Groups
-        for ag in ir_config.address_groups:
-            for member in ag.members:
-                if member not in all_address_objects:
-                    issues.append(ValidationIssue(
-                        severity="HIGH",
-                        category="DEPENDENCY",
-                        source_object=f"AddressGroup:{ag.name}",
-                        message=f"References unknown member: {member}",
-                        blocking=True
-                    ))
-                    
-        # Check Policies
-        for policy in ir_config.policies:
-            if not policy.source:
-                issues.append(ValidationIssue(
-                    severity="CRITICAL",
-                    category="SEMANTIC",
-                    source_object=f"SecurityRule:{policy.name}",
-                    message="Policy source is empty. This cannot be safely defaulted to 'any'.",
-                    blocking=True
-                ))
-            if not policy.destination:
-                issues.append(ValidationIssue(
-                    severity="CRITICAL",
-                    category="SEMANTIC",
-                    source_object=f"SecurityRule:{policy.name}",
-                    message="Policy destination is empty. This cannot be safely defaulted to 'any'.",
-                    blocking=True
-                ))
-            if not policy.service:
-                issues.append(ValidationIssue(
-                    severity="CRITICAL",
-                    category="SEMANTIC",
-                    source_object=f"SecurityRule:{policy.name}",
-                    message="Policy service is empty. This cannot be safely defaulted to 'any'.",
-                    blocking=True
-                ))
-            # Check Zones
-            for z in policy.from_zone:
-                if z.casefold() not in _UNIVERSAL_KEYWORDS and z not in known_zones:
-                    issues.append(ValidationIssue(
-                        severity="HIGH",
-                        category="DEPENDENCY",
-                        source_object=f"SecurityRule:{policy.name}",
-                        message=f"References unknown from_zone: {z}",
-                        blocking=True
-                    ))
-            
-            # Check Addresses
-            for src in policy.source:
-                if src.casefold() not in _UNIVERSAL_KEYWORDS and src.casefold() not in pan_builtin_tokens and src not in all_address_objects:
-                    issues.append(ValidationIssue(
-                        severity="HIGH",
-                        category="DEPENDENCY",
-                        source_object=f"SecurityRule:{policy.name}",
-                        message=f"References unknown source address: {src}",
-                        blocking=True
-                    ))
-                    
-            for dst in policy.destination:
-                if dst.casefold() not in _UNIVERSAL_KEYWORDS and dst.casefold() not in pan_builtin_tokens and dst not in all_address_objects:
-                    issues.append(ValidationIssue(
-                        severity="HIGH",
-                        category="DEPENDENCY",
-                        source_object=f"SecurityRule:{policy.name}",
-                        message=f"References unknown destination address: {dst}",
-                        blocking=True
-                    ))
-                    
-            # Check Services
-            for srv in policy.service:
-                # Allow application-default, and predefined PAN services if vendor is palo_alto
-                is_builtin = srv.casefold() in _UNIVERSAL_KEYWORDS or srv.casefold() == 'application-default'
-                if is_panos and srv.lower() in pan_predefined_services:
-                    is_builtin = True
-                    
-                if not is_builtin and srv not in all_service_objects:
-                    issues.append(ValidationIssue(
-                        severity="HIGH",
-                        category="DEPENDENCY",
-                        source_object=f"SecurityRule:{policy.name}",
-                        message=f"References unknown service: {srv}",
-                        blocking=True
-                    ))
-                    
-        return issues
+    if derived is None:
+        derived = build_derived_views(
+            config
+        )
 
+    issues: list[ValidationIssue] = []
 
-class SemanticValidator(Validator):
-    """
-    Identifies logical flaws like shadowed rules or overlapping definitions.
-    """
-    def validate(self, ir_config: IRConfig) -> List[ValidationIssue]:
-        issues = []
-        
-        # Parse each family once, then sweep only intervals that can overlap.
-        intervals = {4: [], 6: []}
-        issues_by_order = []
-        latest_by_name = {4: {}, 6: {}}
-        for index, addr in enumerate(ir_config.addresses):
-            if addr.type in (AddressType.NETWORK, AddressType.HOST, AddressType.RANGE):
-                try:
-                    if '/' in addr.value:
-                        network = ipaddress.ip_network(addr.value, strict=False)
-                    elif '-' in addr.value:
-                        # Skip range validation for this basic check
-                        continue
-                    else:
-                        network = ipaddress.ip_network(f"{addr.value}/32")
+    # --------------------------------------------------------------
+    # Reference index integrity
+    # --------------------------------------------------------------
 
-                    intervals[network.version].append((
-                        network.network_address, network.broadcast_address,
-                        index, addr.name, network,
-                        latest_by_name[network.version].get(addr.name),
-                    ))
-                    latest_by_name[network.version][addr.name] = index
-                except ValueError:
-                    issues_by_order.append((index, -1, ValidationIssue(
-                        severity="MEDIUM",
-                        category="SEMANTIC",
-                        source_object=f"Address:{addr.name}",
-                        message=f"Invalid IP format: {addr.value}",
-                        blocking=True
-                    )))
+    for duplicate in derived.references.duplicates:
+        issues.append(
+            _duplicate_object_issue(
+                duplicate
+            )
+        )
 
-        overlap_pairs = []
-        for family_intervals in intervals.values():
-            active = {}
-            expirations = []
-            for start, end, index, name, network, previous_same_name in sorted(
-                family_intervals, key=lambda item: (item[0], item[1], item[2])
-            ):
-                while expirations and expirations[0][0] < start:
-                    _, expired_index = heapq.heappop(expirations)
-                    active.pop(expired_index, None)
-                current = (start, end, index, name, network, previous_same_name)
-                # ponytail: worst-case O(n²) remains when every pair overlaps; emitting every issue is the contract.
-                for existing in active.values():
-                    existing_index = existing[2]
-                    later_index, earlier_index, later_interval, earlier_interval = (
-                        (index, existing_index, current, existing)
-                        if index > existing_index
-                        else (existing_index, index, existing, current)
-                    )
-                    if (
-                        later_interval[3] != earlier_interval[3]
-                        or later_interval[5] == earlier_index
-                    ):
-                        overlap_pairs.append((
-                            later_index, earlier_index, later_interval, earlier_interval,
-                        ))
-                active[index] = current
-                heapq.heappush(expirations, (end, index))
+    # --------------------------------------------------------------
+    # Broken references
+    # --------------------------------------------------------------
 
-        for later_index, earlier_index, later_interval, earlier_interval in sorted(
-            overlap_pairs, key=lambda pair: (pair[0], pair[1])
-        ):
-            issues_by_order.append((later_index, earlier_index, ValidationIssue(
-                severity="LOW",
-                category="SEMANTIC",
-                source_object=f"Address:{later_interval[3]}",
-                message=(
-                    f"Overlaps with existing address {earlier_interval[3]} "
-                    f"({earlier_interval[4]})"
-                ),
-                blocking=False,
-            )))
-
-        issues = [issue for _, _, issue in sorted(issues_by_order, key=lambda item: (item[0], item[1]))]
-        return issues
-
-
-class CapacityValidator(Validator):
-    """
-    Ensures the generated IR does not exceed the target platform's hardware limits.
-    """
-    def __init__(self, limits: Dict[str, int]):
-        self.limits = limits
-        
-    def validate(self, ir_config: IRConfig) -> List[ValidationIssue]:
-        issues = []
-        
-        limit_checks = {
-            'max_policies': len(ir_config.policies),
-            'max_address_objects': len(ir_config.addresses) + len(ir_config.address_groups),
-            'max_zones': len(ir_config.zones)
-        }
-        
-        for key, count in limit_checks.items():
-            limit = self.limits.get(key)
-            if limit and count > limit:
-                issues.append(ValidationIssue(
-                    severity="CRITICAL",
-                    category="CAPACITY",
-                    source_object="Global",
-                    message=f"Exceeded {key}: configured {count}, limit {limit}",
-                    blocking=True
-                ))
-                
-        return issues
-
-
-def validate_ir(ir_config: IRConfig, ir_index: Optional[IRIndex] = None) -> ValidationResult:
-    return ValidationResult(
-        DependencyValidator(ir_index).validate(ir_config)
-        + SemanticValidator().validate(ir_config)
+    broken_references = (
+        collect_broken_references(
+            config,
+            index=derived.references,
+        )
     )
+
+    for broken in broken_references:
+        issues.append(
+            _broken_reference_issue(
+                broken
+            )
+        )
+
+    # --------------------------------------------------------------
+    # Interface topology
+    # --------------------------------------------------------------
+
+    for interface in derived.topology.interfaces:
+        for message in interface.issues:
+            issues.append(
+                ValidationIssue(
+                    severity=(
+                        ValidationSeverity.WARNING
+                    ),
+                    domain="interface_topology",
+                    vdom=interface.vdom,
+                    object_name=interface.name,
+                    field="interface",
+                    message=message,
+                )
+            )
+
+    # --------------------------------------------------------------
+    # VPN topology
+    # --------------------------------------------------------------
+
+    for vpn in derived.topology.vpns:
+        for message in vpn.issues:
+            issues.append(
+                ValidationIssue(
+                    severity=(
+                        ValidationSeverity.WARNING
+                    ),
+                    domain="vpn_topology",
+                    vdom=vpn.vdom,
+                    object_name=vpn.name,
+                    field="interface",
+                    message=message,
+                )
+            )
+
+    # --------------------------------------------------------------
+    # Service transformation
+    # --------------------------------------------------------------
+
+    for issue in derived.services.issues:
+        issues.append(
+            ValidationIssue(
+                severity=(
+                    ValidationSeverity.WARNING
+                ),
+                domain="service",
+                vdom=issue.vdom,
+                object_name=issue.service,
+                field=None,
+                message=issue.message,
+            )
+        )
+
+    # --------------------------------------------------------------
+    # NAT transformation
+    # --------------------------------------------------------------
+
+    for nat in derived.nat:
+        object_name = (
+            nat.policy_name
+            or (
+                str(nat.policy_id)
+                if nat.policy_id is not None
+                else None
+            )
+        )
+
+        for message in nat.issues:
+            issues.append(
+                ValidationIssue(
+                    severity=(
+                        ValidationSeverity.WARNING
+                    ),
+                    domain="nat",
+                    vdom=nat.vdom,
+                    object_name=object_name,
+                    field="nat",
+                    message=message,
+                )
+            )
+
+    # --------------------------------------------------------------
+    # Policy-name transformation
+    # --------------------------------------------------------------
+
+    for policy_name in derived.policy_names:
+        if not policy_name.collision:
+            continue
+
+        issues.append(
+            ValidationIssue(
+                severity=(
+                    ValidationSeverity.ERROR
+                ),
+                domain="policy",
+                vdom=policy_name.vdom,
+                object_name=(
+                    policy_name.source_name
+                    or (
+                        str(
+                            policy_name.policy_id
+                        )
+                        if (
+                            policy_name.policy_id
+                            is not None
+                        )
+                        else None
+                    )
+                ),
+                field="name",
+                message=(
+                    "Normalized policy name "
+                    f"{policy_name.normalized_name!r} "
+                    "collides with another policy "
+                    "after the target name-length "
+                    "limit is applied."
+                ),
+            )
+        )
+
+    # --------------------------------------------------------------
+    # VPN Phase-2 selector transformation
+    # --------------------------------------------------------------
+
+    for issue in derived.vpn.issues:
+        issues.append(
+            ValidationIssue(
+                severity=(
+                    ValidationSeverity.WARNING
+                ),
+                domain="vpn_phase2",
+                vdom=issue.vdom,
+                object_name=issue.phase2,
+                field=issue.selector,
+                message=issue.message,
+            )
+        )
+
+    return ValidationResult(
+        issues=_deduplicate_issues(
+            issues
+        )
+    )
+
+
+def _duplicate_object_issue(
+    duplicate: DuplicateObject,
+) -> ValidationIssue:
+    return ValidationIssue(
+        severity=ValidationSeverity.ERROR,
+        domain=duplicate.kind.value,
+        vdom=duplicate.vdom,
+        object_name=duplicate.name,
+        field="name",
+        message=(
+            "Duplicate object name in the same "
+            "VDOM and object type."
+        ),
+    )
+
+
+def _broken_reference_issue(
+    broken: BrokenReference,
+) -> ValidationIssue:
+    expected = ", ".join(
+        kind.value
+        for kind in broken.expected_kinds
+    )
+
+    return ValidationIssue(
+        severity=ValidationSeverity.ERROR,
+        domain=broken.source_kind,
+        vdom=broken.source_vdom,
+        object_name=broken.source_name,
+        field=broken.source_field,
+        message=(
+            f"Reference {broken.reference!r} "
+            "could not be resolved in the same "
+            f"VDOM. Expected: {expected}."
+        ),
+    )
+
+
+def _deduplicate_issues(
+    issues: list[ValidationIssue],
+) -> list[ValidationIssue]:
+    """
+    Remove duplicate diagnostics while preserving deterministic order.
+
+    Some failures can be discovered through more than one derived path.
+    """
+
+    result: list[ValidationIssue] = []
+
+    seen: set[
+        tuple[
+            ValidationSeverity,
+            str,
+            str,
+            str | None,
+            str | None,
+            str,
+        ]
+    ] = set()
+
+    for issue in issues:
+        key = (
+            issue.severity,
+            issue.domain,
+            issue.vdom,
+            issue.object_name,
+            issue.field,
+            issue.message,
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        result.append(issue)
+
+    return result
