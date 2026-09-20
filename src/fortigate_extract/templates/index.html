@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#172321" />
     <meta
       name="description"
-      content="A focused workspace for firewall configuration conversion, source inventory extraction, and live migration."
+      content="Extract a FortiGate CLI configuration into a reviewable Excel workbook."
     />
-    <title>Firewall Migration Tool · Workspace</title>
+    <title>FortiGate Excel Report</title>
     <link
       rel="icon"
       type="image/svg+xml"
@@ -29,101 +29,65 @@
       type="font/ttf"
       crossorigin
     />
-    <script src="{{ url_for('static', filename='theme.js') }}?v=5.0"></script>
+    <script src="{{ url_for('static', filename='theme.js') }}?v=6.0"></script>
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='style.css') }}?v=5.2"
+      href="{{ url_for('static', filename='style.css') }}?v=6.0"
     />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='themes.css') }}?v=5.2"
+      href="{{ url_for('static', filename='themes.css') }}?v=6.0"
     />
     <script
       defer
-      src="{{ url_for('static', filename='app.js') }}?v=5.0"
-    ></script>
-    <script
-      defer
-      src="{{ url_for('static', filename='default_workflow.js') }}?v=5.1"
+      src="{{ url_for('static', filename='app.js') }}?v=6.0"
     ></script>
   </head>
-  <body data-default-workflow="extract">
+  <body>
     <a class="skip-link" href="#main-content">Skip to workspace</a>
+
     <aside class="sidebar" aria-label="Workspace navigation">
-      <a class="brand" href="/" aria-label="Firewall Migration Tool home"
-        ><span class="brand-mark">{{ icon('switch') }}</span
-        ><span class="brand-wordmark"
-          >Firewall<span>MIGRATION TOOL</span></span
-        ></a
-      >
-      <nav
-        class="mode-tabs"
-        role="tablist"
-        aria-label="Workflow"
-        aria-orientation="vertical"
-      >
+      <a class="brand" href="/" aria-label="FortiGate Excel Report home">
+        <span class="brand-mark">{{ icon('table') }}</span>
+        <span class="brand-wordmark">
+          FortiGate<span>EXCEL REPORT</span>
+        </span>
+      </a>
+
+      <nav class="mode-tabs" aria-label="Workflow">
         <button
           id="tab-extract"
-          class="tab-btn"
-          role="tab"
-          aria-selected="false"
-          aria-controls="mode-extract-form"
-          data-tab="extract"
-          tabindex="-1"
-          aria-label="Extract Data to Excel"
-        >
-          {{ icon('table') }}<span>Extract to Excel</span
-          ><span class="nav-active-dot"></span>
-        </button>
-        <button
-          id="tab-download"
           class="tab-btn active"
-          role="tab"
-          aria-selected="true"
-          aria-controls="mode-download-form"
-          data-tab="download"
+          type="button"
+          aria-current="page"
         >
-          {{ icon('switch') }}<span>Convert config</span
-          ><span class="nav-active-dot"></span>
-        </button>
-        <button
-          id="tab-live"
-          class="tab-btn"
-          role="tab"
-          aria-selected="false"
-          aria-controls="mode-live-form"
-          data-tab="live"
-          tabindex="-1"
-          aria-label="Live Migration"
-        >
-          {{ icon('activity') }}<span>Live migration</span
-          ><span class="nav-active-dot"></span>
+          {{ icon('table') }}
+          <span>Extract to Excel</span>
+          <span class="nav-active-dot"></span>
         </button>
       </nav>
+
       <div class="sidebar-bottom">
         <div class="sidebar-note">
-          {{ icon('network') }}<strong
-            >Across vendors.<br />One workspace.</strong
-          >
-          <p>Move your configuration forward, with every step in view.</p>
-          <div class="vendor-dots" aria-hidden="true">
-            <span>F</span><span>P</span><span>C</span><span>CP</span
-            ><span>J</span>
-          </div>
+          {{ icon('shield') }}
+          <strong>FortiGate source.<br />Reviewable workbook.</strong>
+          <p>
+            Parse the CLI, preserve explicit source configuration, calculate
+            derived views, validate references, and export one Excel report.
+          </p>
         </div>
-        <button id="btn-open-guide" class="sidebar-link" type="button">
-          {{ icon('book') }}<span>Workspace guide</span>{{ icon('chevron') }}
-        </button>
       </div>
     </aside>
+
     <div class="app-shell">
       <main class="main-content" id="main-content" tabindex="-1">
         <div class="page-heading reveal">
           <div>
-            <p class="eyebrow">FIREWALL OPERATIONS</p>
-            <h1 id="page-title">Convert configuration</h1>
-            <p id="page-description">
-              A clear path from your existing firewall to what comes next.
+            <p class="eyebrow">FORTIGATE CONFIGURATION ANALYSIS</p>
+            <h1>FortiGate Excel Report</h1>
+            <p>
+              Upload a FortiGate CLI backup, review the extracted inventory,
+              then download the complete Excel workbook.
             </p>
           </div>
           <div class="page-heading-actions">
@@ -138,7 +102,7 @@
               type="button"
               id="btn-toggle-theme"
               class="theme-toggle"
-              aria-label="Switch to dark mode"
+              aria-label="Switch theme"
               aria-pressed="false"
             >
               <svg
@@ -151,175 +115,113 @@
                 stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z" /></svg
-              ><svg
+                <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z" />
+              </svg>
+              <svg
                 class="icon theme-sun"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
                 stroke-width="1.7"
                 stroke-linecap="round"
+                stroke-linejoin="round"
                 aria-hidden="true"
               >
                 <circle cx="12" cy="12" r="4" />
                 <path
                   d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"
-                /></svg
-              ><span id="theme-label">Dark mode</span>
+                />
+              </svg>
+              <span id="theme-label">Theme</span>
             </button>
           </div>
         </div>
+
         <div class="workspace-grid">
           <div class="workspace-main">
-            {% include 'partials/source_configuration.html' %} {% include
-            'partials/exports.html' %} {% include 'partials/live_migration.html'
-            %}
+            {% include 'partials/source_configuration.html' %}
             <div
               id="error-message"
               class="error-banner hidden"
               role="alert"
             ></div>
           </div>
+
           <aside
             class="context-column reveal"
             aria-label="Configuration overview"
           >
             <section class="context-card">
               <div class="context-heading">
-                <span class="eyebrow">AT A GLANCE</span>{{ icon('network') }}
+                <span class="eyebrow">AT A GLANCE</span>
+                {{ icon('network') }}
               </div>
-              <h2>Your migration path</h2>
-              <div class="migration-path">
-                <div class="path-node">
-                  <span class="node-icon">{{ icon('shield') }}</span>
-                  <div>
-                    <span class="field-caption">SOURCE FIREWALL</span
-                    ><strong id="summary-source">Fortinet FortiGate</strong>
-                  </div>
-                </div>
-                <div class="path-connector">
-                  <span></span><small>Configuration mapping</small>
-                </div>
-                <div class="path-node">
-                  <span class="node-icon node-target"
-                    >{{ icon('layers') }}</span
-                  >
-                  <div>
-                    <span class="field-caption">OUTPUT</span
-                    ><strong id="summary-target">Palo Alto Networks</strong>
-                  </div>
-                </div>
+              <h2>Configuration overview</h2>
+
+              <div class="summary-row">
+                <span>Source</span>
+                <strong id="summary-file">No configuration selected</strong>
               </div>
+              <div class="summary-row">
+                <span>Status</span>
+                <span class="state-badge" id="summary-state">
+                  Awaiting source
+                </span>
+              </div>
+
               <div class="context-divider"></div>
-              <div class="summary-row">
-                <span>Source</span
-                ><strong id="summary-file">No configuration yet</strong>
-              </div>
-              <div class="summary-row">
-                <span>Status</span
-                ><span class="state-badge" id="summary-state"
-                  >Awaiting source</span
-                >
-              </div>
+
               <div class="inventory-counts">
                 <div>
-                  <strong id="inventory-interface-count">—</strong
-                  ><span>Interfaces</span>
+                  <strong id="inventory-interface-count">—</strong>
+                  <span>Interfaces</span>
                 </div>
                 <div>
-                  <strong id="inventory-policy-count">—</strong
-                  ><span>Policies</span>
+                  <strong id="inventory-policy-count">—</strong>
+                  <span>Policies</span>
                 </div>
+                <div>
+                  <strong id="inventory-address-count">—</strong>
+                  <span>Addresses</span>
+                </div>
+                <div>
+                  <strong id="inventory-vpn-count">—</strong>
+                  <span>VPN Phase 1</span>
+                </div>
+              </div>
+
+              <div class="context-divider"></div>
+
+              <div class="summary-row">
+                <span>Errors</span>
+                <strong id="validation-error-count">—</strong>
+              </div>
+              <div class="summary-row">
+                <span>Warnings</span>
+                <strong id="validation-warning-count">—</strong>
               </div>
             </section>
           </aside>
         </div>
+
         <footer class="app-footer">
-          <span>Firewall Migration Tool</span
-          ><span
-            >Built for the next configuration.
-            <span class="footer-dot">·</span> Multi-vendor workspace</span
-          >
+          <span>FortiGate Excel Report</span>
+          <span>Source extraction · derived views · validation · Excel</span>
         </footer>
       </main>
     </div>
+
     <div
       id="toast-container"
       class="toast-container"
       aria-live="polite"
       aria-atomic="false"
     ></div>
-    <div
-      id="guide-modal"
-      class="modal-backdrop hidden"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="guide-title"
-    >
-      <section class="guide-dialog">
-        <div class="section-heading">
-          <span class="eyebrow">WORKSPACE GUIDE</span
-          ><button
-            id="btn-close-guide"
-            type="button"
-            class="btn-icon"
-            aria-label="Close guide"
-          >
-            {{ icon('close') }}
-          </button>
-        </div>
-        <h2 id="guide-title">From configuration to next step.</h2>
-        <p>
-          Choose the workflow that fits your task. You can use a backup file or
-          retrieve configuration from a supported device.
-        </p>
-        <ol class="guide-steps">
-          <li>
-            <span>01</span>
-            <div>
-              <strong>Convert configuration</strong>
-              <p>
-                Select a source and target, upload a backup, then download a
-                migration bundle with configuration artifacts and source inventory.
-              </p>
-            </div>
-          </li>
-          <li>
-            <span>02</span>
-            <div>
-              <strong>Extract to Excel</strong>
-              <p>
-                Download a source inventory workbook. For FortiGate interfaces,
-                the Interfaces and Interface Source Settings sheets contain
-                normalized fields and additional source settings.
-              </p>
-            </div>
-          </li>
-          <li>
-            <span>03</span>
-            <div>
-              <strong>Live migration</strong>
-              <p>
-                Configure the target connection, run diagnostics, then generate
-                and review a plan. Applying changes requires your explicit
-                confirmation.
-              </p>
-            </div>
-          </li>
-        </ol>
-        <div class="guide-tip">
-          {{ icon('info') }}<span
-            >A downloaded workbook is a snapshot. Generate a new file whenever
-            you change the source configuration.</span
-          >
-        </div>
-      </section>
-    </div>
-    <noscript
-      ><div class="noscript-banner">
-        JavaScript is required to upload configurations and use this workspace.
-        Please enable it and reload.
-      </div></noscript
-    >
+
+    <noscript>
+      <div class="noscript-banner">
+        JavaScript is required to upload and export FortiGate configurations.
+      </div>
+    </noscript>
   </body>
 </html>
