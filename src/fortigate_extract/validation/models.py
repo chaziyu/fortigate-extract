@@ -1,26 +1,45 @@
-from dataclasses import dataclass, field
-from typing import List, Optional
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
 
 
-@dataclass
+class ValidationSeverity(str, Enum):
+    WARNING = "warning"
+    ERROR = "error"
+
+
+@dataclass(frozen=True, slots=True)
 class ValidationIssue:
-    severity: str
-    category: str
-    source_object: str
+    severity: ValidationSeverity
+
+    domain: str
+    vdom: str
+
+    object_name: str | None
+    field: str | None
+
     message: str
-    blocking: bool
-    target_object: Optional[str] = None
-    recommended_action: Optional[str] = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ValidationResult:
-    issues: List[ValidationIssue] = field(default_factory=list)
+    issues: list[ValidationIssue]
 
     @property
-    def blocking_issues(self) -> List[ValidationIssue]:
-        return [issue for issue in self.issues if issue.blocking]
+    def errors(self) -> list[ValidationIssue]:
+        return [
+            issue
+            for issue in self.issues
+            if issue.severity
+            == ValidationSeverity.ERROR
+        ]
 
     @property
-    def blocking_reasons(self) -> List[str]:
-        return [issue.message for issue in self.blocking_issues]
+    def warnings(self) -> list[ValidationIssue]:
+        return [
+            issue
+            for issue in self.issues
+            if issue.severity
+            == ValidationSeverity.WARNING
+        ]
