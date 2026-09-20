@@ -77,9 +77,6 @@ class FGConfig(BaseModel):
     local_users: list[FGLocalUser] = Field(default_factory=list)
     user_groups: list[FGUserGroup] = Field(default_factory=list)
 
-    administrators: list[FGAdministrator] = Field(default_factory=list)
-    admin_profiles: list[FGAdminProfile] = Field(default_factory=list)
-
     service_categories: list[FGServiceCategory] = Field(default_factory=list)
 
     administrators: list[FGAdministrator] = Field(default_factory=list)
