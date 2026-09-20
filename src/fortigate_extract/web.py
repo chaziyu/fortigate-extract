@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import sys
 from pathlib import Path
 
@@ -13,11 +12,12 @@ from flask import (
     send_file,
 )
 
-from config import ExtractionConfig
-from parser import parse_fortigate_config
-from extraction.extractor import extract_fortigate_config
-from validation.validator import validate_config
-from export.excel import export_excel
+from .config import ExtractionConfig
+from .derived import build_derived_views
+from .parser import parse_fortigate_config
+from .extraction.extractor import extract_fortigate_config
+from .validation.validator import validate_config
+from .export.excel import export_excel
 
 
 XLSX_MIMETYPE = (
@@ -145,11 +145,16 @@ def _run_extraction(
         config=config,
     )
 
-    validation = validate_config(
-        extracted.config,
+    derived = build_derived_views(
+        extracted.config
     )
 
-    return tree, extracted, validation
+    validation = validate_config(
+        extracted.config,
+        derived=derived,
+    )
+
+    return tree, extracted, derived, validation
 
 
 def create_app(
@@ -235,7 +240,7 @@ def create_app(
                 extraction_config
             )
 
-            tree, extracted, validation = _run_extraction(
+            tree, extracted, derived, validation = _run_extraction(
                 text,
                 extraction_config,
             )
@@ -244,8 +249,6 @@ def create_app(
                 {
                     "success": True,
                     "filename": filename,
-                    "source_version": tree.source_version,
-                    "source_build": tree.source_build,
                     "top_level_sections": len(tree.configs),
                     "objects": _config_summary(
                         extracted.config
@@ -311,7 +314,7 @@ def create_app(
                 extraction_config
             )
 
-            _, extracted, validation = _run_extraction(
+            _, extracted, derived, validation = _run_extraction(
                 text,
                 extraction_config,
             )
@@ -320,9 +323,11 @@ def create_app(
 
             export_excel(
                 extracted=extracted,
+                derived=derived,
                 validation=validation,
                 output=workbook,
                 config=extraction_config,
+                source_name=filename,
             )
 
             workbook.seek(0)
