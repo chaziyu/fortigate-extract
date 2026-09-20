@@ -582,7 +582,7 @@ def _write_table_sheet(
     sheet.cell(1, 1).alignment = Alignment(vertical="center")
     sheet.row_dimensions[1].height = 24
 
-    if max_col > 1:
+    if max_col > 2:
         sheet.merge_cells(
             start_row=2,
             start_column=1,
@@ -629,8 +629,7 @@ def _write_table_sheet(
 
         if row.get("__review__"):
             for column in range(1, max_col + 1):
-                if sheet.cell(index, column).fill == PatternFill():
-                    sheet.cell(index, column).fill = _REVIEW_FILL
+                sheet.cell(index, column).fill = _REVIEW_FILL
 
     if rows:
         sheet.auto_filter.ref = f"A3:{get_column_letter(max_col)}{len(rows) + 3}"
@@ -1924,7 +1923,10 @@ def _source_configuration_rows(context: _ExcelContext, headers: Sequence[str]) -
                     "Parent / Subsection": list(record.parent_objects),
                     "Operation": command.operation,
                     "Setting": command.key,
-                    "Value": list(command.values),
+                    "Value": _safe_command_value(
+                        command.key,
+                        command.values,
+                    ),
                     "Analysis Status": "SOURCE",
                     "Manual Review": "No",
                 }
@@ -1943,7 +1945,10 @@ def _policy_source_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
                     "Policy Name": policy_names.get(str(record.object_name), ""),
                     "Operation": command.operation,
                     "Setting": command.key,
-                    "Ordered Source Values": list(command.values),
+                    "Ordered Source Values": _safe_command_value(
+                        command.key,
+                        command.values,
+                    ),
                 }
             )
     return rows
@@ -1958,7 +1963,10 @@ def _interface_source_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                     "Interface": record.object_name,
                     "Source Vendor": "FortiGate",
                     "Setting": command.key,
-                    "Value": list(command.values),
+                    "Value": _safe_command_value(
+                        command.key,
+                        command.values,
+                    ),
                     "Extraction Status": "EXTRACTED",
                 }
             )
@@ -1980,7 +1988,7 @@ def _interface_nested_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                     "Object / Edit": record.object_name,
                     "Operation": command.operation,
                     "Setting": command.key,
-                    "Value": list(command.values),
+                    "Value": _safe_command_value(command.key, command.values),
                     "Extraction Status": "EXTRACTED",
                     "Manual Review": "No",
                 }
@@ -2435,6 +2443,39 @@ def _sheet_for_domain(domain: str) -> str:
         "user_group": "User Groups",
         "ips_sensor": "IPS Sensors",
     }.get(domain, "Source Inventory")
+
+
+def _safe_command_value(
+    key: str,
+    values: Iterable[Any],
+) -> Any:
+    """
+    Sanitize one raw CLI command before it reaches Excel.
+
+    Source-command appendix sheets must never bypass the same secret-redaction
+    rules used for raw_extra/source inventory.
+    """
+
+    normalized_key = str(key).lower().replace("-", "_")
+    raw_values = list(values)
+    raw_value: Any
+
+    if not raw_values:
+        raw_value = True
+    elif len(raw_values) == 1:
+        raw_value = raw_values[0]
+    else:
+        raw_value = raw_values
+
+    sanitized = sanitize_source_attributes(
+        {
+            key: raw_value,
+        }
+    )
+
+    return sanitized.get(
+        normalized_key
+    )
 
 
 def _excel_safe(value: Any) -> Any:
