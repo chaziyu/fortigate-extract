@@ -1907,7 +1907,39 @@ def _ssl_host_check_item_rows(context: _ExcelContext, headers: Sequence[str]) ->
 
 
 def _local_user_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    return _model_rows(context, context.config.local_users, headers, {})
+    return _model_rows(
+        context,
+        context.config.local_users,
+        headers,
+        {
+            "Name": "name",
+            "ID": "id",
+            "Status": "status",
+            "Type": "type",
+            "Password Configured": "password_configured",
+            "Password Time": "passwd_time",
+            "Two Factor": "two_factor",
+            "Two Factor Authentication": "two_factor_authentication",
+            "Two Factor Notification": "two_factor_notification",
+            "FortiToken": "fortitoken",
+            "Email": "email_to",
+            "SMS Server": "sms_server",
+            "SMS Custom Server": "sms_custom_server",
+            "SMS Phone": "sms_phone",
+            "LDAP Server": "ldap_server",
+            "RADIUS Server": "radius_server",
+            "TACACS+ Server": "tacacs_server",
+            "Auth Concurrent Override": "auth_concurrent_override",
+            "Auth Concurrent Value": "auth_concurrent_value",
+            "Auth Timeout": "authtimeout",
+            "Password Policy": "passwd_policy",
+            "Workstation": "workstation",
+            "Username Sensitivity": "username_sensitivity",
+            "PPK Identity": "ppk_identity",
+            "PPK Secret Configured": "ppk_secret_configured",
+            "VDOM": "vdom",
+        },
+    )
 
 
 def _user_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
@@ -1917,9 +1949,14 @@ def _user_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
         headers,
         {
             "Name": "name",
-            "Members": "members",
-            "Group Type": "group_type",
             "ID": "id",
+            "Type": "group_type",
+            "Group Type": "group_type",
+            "Members": "members",
+            "Match Count": lambda item: len(item.matches),
+            "Auth Concurrent Override": "auth_concurrent_override",
+            "Auth Concurrent Value": "auth_concurrent_value",
+            "Auth Timeout": "authtimeout",
             "VDOM": "vdom",
         },
     )
@@ -1966,11 +2003,45 @@ def _user_group_guest_rows(context: _ExcelContext, headers: Sequence[str]) -> li
 
 
 def _administrator_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    return _model_rows(context, context.config.administrators, headers, {})
+    return _model_rows(
+        context,
+        context.config.administrators,
+        headers,
+        {
+            "Name": "name",
+            "Access Profile": "accprofile",
+            "VDOMs": "vdoms",
+            "IPv4 Trusted Hosts": "trusthosts",
+            "IPv6 Trusted Hosts": "ip6_trusthosts",
+            "Two Factor": "two_factor",
+            "Two Factor Authentication": "two_factor_authentication",
+            "Two Factor Notification": "two_factor_notification",
+            "Remote Auth": "remote_auth",
+            "Remote Group": "remote_group",
+            "Credential Configured": lambda item: (
+                bool(item.password_configured or item.ssh_key_configured)
+            ),
+            "FortiToken": "fortitoken",
+            "Guest User Groups": "guest_usergroups",
+            "Schedule": "schedule",
+            "Peer Auth": "peer_auth",
+            "Peer Group": "peer_group",
+            "SSH Certificate": "ssh_certificate",
+            "Additional Settings": "raw_extra",
+        },
+    )
 
 
 def _admin_profile_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    return _model_rows(context, context.config.admin_profiles, headers, {})
+    return _model_rows(
+        context,
+        context.config.admin_profiles,
+        headers,
+        {
+            "Name": "name",
+            "Additional Settings": "raw_extra",
+        },
+    )
 
 
 def _admin_permission_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
@@ -2003,7 +2074,21 @@ def _admin_permission_rows(context: _ExcelContext, headers: Sequence[str]) -> li
 
 
 def _ips_sensor_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    return _model_rows(context, context.config.ips_sensors, headers, {})
+    return _model_rows(
+        context,
+        context.config.ips_sensors,
+        headers,
+        {
+            "Name": "name",
+            "Description": "comment",
+            "Block Malicious URL": "block_malicious_url",
+            "Scan Botnet Connections": "scan_botnet_connections",
+            "Extended Log": "extended_log",
+            "Replacement Message Group": "replacemsg_group",
+            "Entry Count": lambda item: len(item.entries),
+            "VDOM": "vdom",
+        },
+    )
 
 
 def _ips_entry_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
@@ -2014,17 +2099,33 @@ def _ips_entry_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
                 "Sensor": sensor.name,
                 "Entry ID": item.id,
                 "Rule": item.rule,
+                "Signature IDs": item.rule,
                 "CVE": item.cve,
+                "CVEs": item.cve,
                 "Application": item.application,
+                "Applications": item.application,
                 "OS": item.os,
                 "Protocol": item.protocol,
+                "Protocols": item.protocol,
                 "Severity": item.severity,
+                "Severities": item.severity,
                 "Location": item.location,
                 "Default Action": item.default_action,
                 "Default Status": item.default_status,
                 "Action": item.action,
                 "Status": item.status,
+                "Enabled": _enabled_text(item.status),
                 "Log": item.log,
+                "Log Packet": item.log_packet,
+                "Log Attack Context": item.log_attack_context,
+                "Rate Count": item.rate_count,
+                "Rate Duration": item.rate_duration,
+                "Rate Mode": item.rate_mode,
+                "Rate Track": item.rate_track,
+                "Quarantine": item.quarantine,
+                "Quarantine Expiry": item.quarantine_expiry,
+                "Quarantine Log": item.quarantine_log,
+                "Vulnerability Types": item.vuln_type,
                 "VDOM": sensor.vdom,
                 "Additional Settings": sanitize_source_attributes(item.raw_extra),
             }
@@ -2062,6 +2163,7 @@ def _security_profile_rows(context: _ExcelContext, headers: Sequence[str]) -> li
             "Antivirus": "av_profile",
             "Vulnerability": "ips_sensor",
             "URL Filtering": "webfilter_profile",
+            "File Blocking": "file_filter_profile",
             "SSL Decryption": "ssl_ssh_profile",
             "Description": None,
             "VDOM": "vdom",
