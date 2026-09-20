@@ -114,8 +114,17 @@ def _validation_summary(validation) -> dict:
     severity_counts: dict[str, int] = {}
 
     for issue in issues:
+        raw_severity = getattr(
+            issue,
+            "severity",
+            "unknown",
+        )
         severity = str(
-            getattr(issue, "severity", "unknown")
+            getattr(
+                raw_severity,
+                "value",
+                raw_severity,
+            )
         )
 
         severity_counts[severity] = (
