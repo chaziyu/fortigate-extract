@@ -582,7 +582,13 @@ def _write_table_sheet(
     sheet.cell(1, 1).alignment = Alignment(vertical="center")
     sheet.row_dimensions[1].height = 24
 
-    sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=max_col)
+    if max_col > 1:
+        sheet.merge_cells(
+            start_row=2,
+            start_column=1,
+            end_row=2,
+            end_column=max_col - 1,
+        )
     note = sheet.cell(2, 1)
     note.value = _sheet_note(sheet_name, len(rows))
     note.font = _MUTED_FONT
@@ -638,7 +644,10 @@ def _write_table_sheet(
 
 
 def _add_back_link(sheet) -> None:
-    cell = sheet.cell(2, max(sheet.max_column, 1))
+    if sheet.max_column <= 1:
+        return
+
+    cell = sheet.cell(2, sheet.max_column)
     cell.value = "Back to Summary"
     cell.hyperlink = "#'Summary'!A1"
     cell.font = _LINK_FONT
