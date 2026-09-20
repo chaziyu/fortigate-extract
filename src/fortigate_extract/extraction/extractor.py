@@ -7,6 +7,7 @@ from ..nodes import FortiGateConfigTree
 from .address import extract_addresses
 from .admin import extract_admin
 from .dhcp import extract_dhcp
+from .external_resource import extract_external_resources
 from .interfaces import extract_interfaces
 from .ip_pools import extract_ip_pools
 from .ips import extract_ips

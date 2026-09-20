@@ -1,26 +1,45 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-# Project paths
-PACKAGE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = PACKAGE_DIR.parent.parent
-OUTPUT_DIR = PROJECT_ROOT / "output"
-
-# Web application
-APP_HOST = "127.0.0.1"
-APP_PORT = 5000
-DEBUG = False
-
-# Upload handling
-ALLOWED_EXTENSIONS = {".conf", ".cfg", ".txt"}
-MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
-
-# Excel export
-DEFAULT_EXCEL_FILENAME = "fortigate_inventory.xlsx"
-
-# Extraction
-DEFAULT_SOURCE_CONTEXT = "root"
+import yaml
+from pydantic import BaseModel
 
 
-def is_allowed_file(filename: str) -> bool:
-    """Return True when the uploaded file extension is supported."""
-    return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
+class ExtractionConfig(BaseModel):
+    """
+    Runtime configuration for FortiGate source extraction.
+
+    This configuration controls input handling and extraction behavior only.
+    Migration semantics, derived views, validation results, and report
+    persistence are handled by their respective layers.
+    """
+
+    # Input handling.
+    encoding: str = "utf-8"
+
+    # Extraction behavior.
+    preserve_unknown_sections: bool = True
+    preserve_unknown_fields: bool = True
+    include_source_metadata: bool = True
+
+    # Validation behavior.
+    validate_references: bool = True
+    validate_required_fields: bool = True
+
+    @classmethod
+    def from_yaml(
+        cls,
+        filepath: str | Path,
+    ) -> "ExtractionConfig":
+        path = Path(filepath)
+
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            data = yaml.safe_load(file)
+
+        return cls.model_validate(
+            data or {}
+        )
