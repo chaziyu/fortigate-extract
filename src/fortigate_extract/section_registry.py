@@ -1263,3 +1263,23 @@ def get_section_capability(
             encountered - known
         ),
     }
+
+
+
+# ----------------------------------------------------------------------
+# System External resource
+# ----------------------------------------------------------------------
+
+register_section(
+    SectionSpec(
+        source_path="system external-resource",
+        integer_fields=_fields(
+            "refresh-rate",
+        ),
+        scalar_fields=_fields(
+            "resource",
+            "type",
+            "comments",
+        ),
+    )
+)

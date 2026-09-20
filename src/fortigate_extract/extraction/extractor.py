@@ -72,6 +72,8 @@ def extract_fortigate_config(
     extract_ips(tree, source)
     extract_profile_groups(tree, source)
 
+    extract_external_resources(tree, source)
+
     return ExtractionResult(
         config=source,
     )

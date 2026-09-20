@@ -82,3 +82,5 @@ class FGConfig(BaseModel):
     administrators: list[FGAdministrator] = Field(default_factory=list)
 
     admin_profiles: list[FGAdminProfile] = Field(default_factory=list)
+
+    external_resources: list[FGExternalResource] = Field(default_factory=list)
