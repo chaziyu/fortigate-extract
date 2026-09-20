@@ -38,7 +38,7 @@ class FGVIP(BaseModel):
 
     # Internal/mapped side
     mappedip: list[str] = Field(default_factory=list)
-    mapped_addr: list[str] = Field(default_factory=list)
+    mapped_addr: str | None = None
 
     # Port forwarding
     portforward: str | None = None

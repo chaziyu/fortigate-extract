@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from model.config import FGConfig
-from model.routing import FGStaticRoute
-from nodes import FortiGateConfigTree
+from typing import Protocol
+
+from ..model.route_static import FGStaticRoute
+from ..nodes import FortiGateConfigTree
 
 from .common import (
     evaluate_edit,
@@ -11,10 +12,18 @@ from .common import (
 )
 
 
+class RouteConfig(Protocol):
+    """Minimal destination required by route extraction."""
+
+    static_routes: list[FGStaticRoute]
+
+
 def extract_routes(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: RouteConfig,
 ) -> None:
+    """Extract FortiGate static-route source objects."""
+
     _extract_static_routes(
         tree,
         config,
@@ -22,18 +31,10 @@ def extract_routes(
         address_family="ipv4",
     )
 
-    # Add only if you support an IPv6 route model/report.
-    # _extract_static_routes(
-    #     tree,
-    #     config,
-    #     section_path="router static6",
-    #     address_family="ipv6",
-    # )
-
 
 def _extract_static_routes(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: RouteConfig,
     *,
     section_path: str,
     address_family: str,
@@ -49,22 +50,29 @@ def _extract_static_routes(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGStaticRoute,
             vdom=source.vdom,
         )
 
+        # Route identity comes from:
+        #
+        #   edit <seq-num>
+        #
+        # Preserve malformed source rather than dropping the route.
         try:
             attributes["seq_num"] = int(
                 source.edit.name
             )
         except ValueError:
-            attributes["raw_extra"]["unparsed_seq_num"] = (
-                source.edit.name
-            )
-            continue
+            attributes["seq_num"] = None
+            attributes["raw_extra"][
+                "unparsed_seq_num"
+            ] = source.edit.name
 
-        # Section identity is derived structural information,
-        # not a FortiOS command field.
-        attributes["address_family"] = address_family
+        # Derived from the source section rather than a FortiOS field.
+        attributes["address_family"] = (
+            address_family
+        )
 
         config.static_routes.append(
             FGStaticRoute(**attributes)

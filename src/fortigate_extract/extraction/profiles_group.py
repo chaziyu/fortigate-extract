@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..model.ippool import FGIPPool
+from ..model.security_profile import FGProfileGroup
 from ..nodes import FortiGateConfigTree
 
 from .common import (
@@ -12,19 +12,19 @@ from .common import (
 )
 
 
-class IPPoolConfig(Protocol):
-    """Minimal destination required by IP-pool extraction."""
+class ProfileGroupConfig(Protocol):
+    """Minimal destination required by profile-group extraction."""
 
-    ip_pools: list[FGIPPool]
+    profile_groups: list[FGProfileGroup]
 
 
-def extract_ip_pools(
+def extract_profile_groups(
     tree: FortiGateConfigTree,
-    config: IPPoolConfig,
+    config: ProfileGroupConfig,
 ) -> None:
-    """Extract FortiGate firewall IP-pool source objects."""
+    """Extract FortiGate security profile-group source objects."""
 
-    section_path = "firewall ippool"
+    section_path = "firewall profile-group"
 
     for source in iter_section_edits(
         tree,
@@ -37,11 +37,11 @@ def extract_ip_pools(
 
         attributes = source_model_kwargs(
             evaluation,
-            model_type=FGIPPool,
+            model_type=FGProfileGroup,
             name=source.edit.name,
             vdom=source.vdom,
         )
 
-        config.ip_pools.append(
-            FGIPPool(**attributes)
+        config.profile_groups.append(
+            FGProfileGroup(**attributes)
         )

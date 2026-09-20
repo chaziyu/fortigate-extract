@@ -1,46 +1,75 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
-class FGInterface(BaseModel):
+class FGInterfaceSecondaryIP(BaseModel):
+    id: int | None = None
 
-    # Identity / context
+    ip: str | None = None
+    allowaccess: list[str] = Field(default_factory=list)
+    ha_priority: int | None = None
+
+    raw_extra: dict[str, Any] = Field(default_factory=dict)
+    explicit_fields: set[str] = Field(default_factory=set)
+
+
+class FGInterface(BaseModel):
+    """
+    Small FortiGate source interface model.
+
+    Only explicit migration-relevant source data belongs here.
+    Relationship ancestry is resolved later.
+    """
+
     name: str
     vdom: str = "root"
 
-    alias: Optional[str] = None
-    description: Optional[str] = None
-    ip: Optional[str] = None
+    # Source identity / presentation
+    alias: str | None = None
+    description: str | None = None
 
-    # if got config secondaryip    
-    secondary_ip_enabled: Optional[str] = None
-    secondary_ips: list[FGInterfaceSecondaryIP] = Field(default_factory=list)
+    # Source interface characteristics
+    type: str | None = None
+    role: str | None = None
+    mode: str | None = None
+    status: str | None = None
 
-    type: Optional[str] = None
-    role: Optional[str] = None
-    mode: Optional[str] = None
-    status: Optional[str] = None
+    # Addressing
+    ip: str | None = None
+    secondary_ips: list[FGInterfaceSecondaryIP] = Field(
+        default_factory=list
+    )
 
+    # Administrative access
     allowaccess: list[str] = Field(default_factory=list)
 
-    # VLAN relationship
-    vlanid: Optional[int] = None
-    interface: Optional[str] = None
+    # Direct FortiGate parent relationship.
+    #
+    # Examples:
+    #   VLAN:
+    #       set interface "port1"
+    #
+    #   VLAN over aggregate:
+    #       set interface "agg1"
+    interface: str | None = None
 
-    # Aggregate / redundant topology
+    vlanid: int | None = None
+
+    # Aggregate/redundant source membership.
+    #
+    # Example:
+    #   edit "agg1"
+    #       set type aggregate
+    #       set member "port1" "port2"
     members: list[str] = Field(default_factory=list)
-    aggregate_parent: Optional[str] = None
-    redundant_interface_parent: Optional[str] = None
 
-    # Useful optional network context
-    vrf: Optional[int] = None
-    remote_ip: Optional[str] = None
+    # Network context
+    vrf: int | None = None
 
-    # Preserve explicit but currently unsupported settings.
     raw_extra: dict[str, Any] = Field(default_factory=dict)
-
-    # Track what was actually present in source config.
     explicit_fields: set[str] = Field(default_factory=set)
 
 # if got config secondaryip

@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from model.config import FGConfig
+from ..model.source import FGConfig
 
 
 @dataclass(slots=True)
 class ExtractionResult:
-    config: FGConfig
+    """Result of FortiGate source extraction."""
 
-    report_views: dict[str, list] = field(
-        default_factory=dict
-    )
+    config: FGConfig

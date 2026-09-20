@@ -1,4 +1,4 @@
-"""Declarative FortiGate section field metadata."""
+"""Declarative FortiGate source field metadata."""
 
 from __future__ import annotations
 
@@ -9,17 +9,21 @@ from typing import Iterable
 @dataclass(frozen=True, slots=True)
 class SectionSpec:
     """
-    Primitive source-field behavior for one FortiGate config section.
+    Primitive source-field shape for one FortiGate config section.
 
-    This registry describes only how explicit CLI values should be
+    Field names use their original FortiGate CLI spelling.
+
+    This registry describes only how explicit source values should be
     represented before FortiGate semantic extraction.
 
     It does not:
+        - normalize field names
         - construct models
+        - classify secrets
         - apply FortiOS defaults
         - resolve references
         - perform validation
-        - know Excel/report destinations
+        - know export/report destinations
     """
 
     source_path: str
@@ -40,10 +44,6 @@ class SectionSpec:
         default_factory=frozenset
     )
 
-    secret_fields: frozenset[str] = field(
-        default_factory=frozenset
-    )
-
 
 SECTION_REGISTRY: dict[str, SectionSpec] = {}
 
@@ -54,6 +54,11 @@ def _fields(*names: str) -> frozenset[str]:
 
 def register_section(spec: SectionSpec) -> None:
     """Register one immutable section specification."""
+
+    if spec.source_path in SECTION_REGISTRY:
+        raise ValueError(
+            f"Section already registered: {spec.source_path!r}"
+        )
 
     categories = {
         "list_fields": spec.list_fields,
@@ -107,28 +112,25 @@ register_section(
         list_fields=_fields(
             "allowaccess",
             "member",
-            "dhcp_relay_ip",
-            "fail_alert_interfaces",
-            "fail_detect_option",
-            "dns_server_protocol",
-            "security_groups",
+            "fail-alert-interfaces",
+            "fail-detect-option",
+            "dns-server-protocol",
+            "security-groups",
         ),
         integer_fields=_fields(
             "vlanid",
             "vrf",
             "mtu",
-            "tcp_mss",
+            "tcp-mss",
             "distance",
             "priority",
-            "ha_priority",
-            "min_links",
+            "ha-priority",
+            "min-links",
             "weight",
-            "snmp_index",
-            "link_up_delay",
-            "link_down_delay",
-            "dhcp_renew_time",
-            "lacp_select_timeout",
-            "bandwidth",
+            "snmp-index",
+            "link-up-delay",
+            "link-down-delay",
+            "dhcp-renew-time",
         ),
         scalar_fields=_fields(
             "type",
@@ -140,13 +142,11 @@ register_section(
             "status",
             "role",
             "defaultgw",
-            "lacp_mode",
-            "lacp_speed",
-            "aggregate_type",
-            "management_ip",
-        ),
-        secret_fields=_fields(
-            "password",
+            "lacp-mode",
+            "lacp-speed",
+            "aggregate-type",
+            "management-ip",
+            "dhcp-relay-ip",
         ),
     )
 )
@@ -154,13 +154,14 @@ register_section(
 register_section(
     SectionSpec(
         source_path="system interface secondaryip",
+        list_fields=_fields(
+            "allowaccess",
+        ),
         integer_fields=_fields(
-            "id",
-            "ha_priority",
+            "ha-priority",
         ),
         scalar_fields=_fields(
             "ip",
-            "allowaccess",
         ),
     )
 )
@@ -198,13 +199,13 @@ register_section(
 ADDRESS_SCALAR_FIELDS = _fields(
     "type",
     "subnet",
-    "start_ip",
-    "end_ip",
+    "start-ip",
+    "end-ip",
     "fqdn",
     "wildcard",
-    "wildcard_fqdn",
-    "associated_interface",
-    "allow_routing",
+    "wildcard-fqdn",
+    "associated-interface",
+    "allow-routing",
     "comment",
 )
 
@@ -212,8 +213,8 @@ register_section(
     SectionSpec(
         source_path="firewall address",
         integer_fields=_fields(
-            "cache_ttl",
-            "route_tag",
+            "cache-ttl",
+            "route-tag",
             "color",
         ),
         scalar_fields=ADDRESS_SCALAR_FIELDS,
@@ -224,18 +225,18 @@ register_section(
     SectionSpec(
         source_path="firewall address6",
         integer_fields=_fields(
-            "cache_ttl",
-            "route_tag",
+            "cache-ttl",
+            "route-tag",
             "color",
         ),
         scalar_fields=_fields(
             "type",
             "ip6",
-            "start_ip",
-            "end_ip",
+            "start-ip",
+            "end-ip",
             "fqdn",
-            "associated_interface",
-            "allow_routing",
+            "associated-interface",
+            "allow-routing",
             "comment",
         ),
     )
@@ -258,7 +259,7 @@ register_section(
         source_path="firewall addrgrp",
         list_fields=_fields(
             "member",
-            "exclude_member",
+            "exclude-member",
         ),
         integer_fields=_fields(
             "color",
@@ -268,7 +269,7 @@ register_section(
             "comment",
             "type",
             "category",
-            "allow_routing",
+            "allow-routing",
         ),
     )
 )
@@ -278,7 +279,7 @@ register_section(
         source_path="firewall addrgrp6",
         list_fields=_fields(
             "member",
-            "exclude_member",
+            "exclude-member",
         ),
         integer_fields=_fields(
             "color",
@@ -288,7 +289,7 @@ register_section(
             "comment",
             "type",
             "category",
-            "allow_routing",
+            "allow-routing",
         ),
     )
 )
@@ -309,7 +310,7 @@ register_section(
     SectionSpec(
         source_path="firewall wildcard-fqdn custom",
         scalar_fields=_fields(
-            "wildcard_fqdn",
+            "wildcard-fqdn",
             "comment",
         ),
     )
@@ -333,19 +334,19 @@ register_section(
     SectionSpec(
         source_path="firewall service custom",
         integer_fields=_fields(
-            "protocol_number",
+            "protocol-number",
             "icmptype",
             "icmpcode",
-            "session_ttl",
         ),
         scalar_fields=_fields(
             "category",
             "protocol",
-            "tcp_portrange",
-            "udp_portrange",
-            "sctp_portrange",
+            "tcp-portrange",
+            "udp-portrange",
+            "sctp-portrange",
             "proxy",
             "comment",
+            "session-ttl",
         ),
     )
 )
@@ -363,49 +364,6 @@ register_section(
     )
 )
 
-
-# ----------------------------------------------------------------------
-# Schedules
-# ----------------------------------------------------------------------
-
-register_section(
-    SectionSpec(
-        source_path="firewall schedule onetime",
-        integer_fields=_fields(
-            "expiration_days",
-        ),
-        scalar_fields=_fields(
-            "start",
-            "end",
-            "start_utc",
-            "end_utc",
-        ),
-    )
-)
-
-register_section(
-    SectionSpec(
-        source_path="firewall schedule recurring",
-        list_fields=_fields(
-            "day",
-        ),
-        scalar_fields=_fields(
-            "start",
-            "end",
-        ),
-    )
-)
-
-register_section(
-    SectionSpec(
-        source_path="firewall schedule group",
-        list_fields=_fields(
-            "member",
-        ),
-    )
-)
-
-
 # ----------------------------------------------------------------------
 # Firewall policy
 # ----------------------------------------------------------------------
@@ -413,6 +371,7 @@ register_section(
 register_section(
     SectionSpec(
         source_path="firewall policy",
+
         list_fields=_fields(
             "srcintf",
             "dstintf",
@@ -425,27 +384,28 @@ register_section(
             "users",
             "poolname",
             "poolname6",
-            "internet_service_name",
-            "internet_service_group",
-            "internet_service_custom",
-            "internet_service_custom_group",
-            "internet_service_src_name",
-            "internet_service_src_group",
-            "internet_service_src_custom",
-            "internet_service_src_custom_group",
-            "internet_service6_name",
-            "internet_service6_group",
-            "internet_service6_custom",
-            "internet_service6_custom_group",
-            "internet_service6_src_name",
-            "internet_service6_src_group",
-            "internet_service6_src_custom",
-            "internet_service6_src_custom_group",
+
+            "internet-service-name",
+            "internet-service-group",
+            "internet-service-custom",
+            "internet-service-custom-group",
+
+            "internet-service-src-name",
+            "internet-service-src-group",
+            "internet-service-src-custom",
+            "internet-service-src-custom-group",
+
+            "internet-service6-name",
+            "internet-service6-group",
+            "internet-service6-custom",
+            "internet-service6-custom-group",
+
+            "internet-service6-src-name",
+            "internet-service6-src-group",
+            "internet-service6-src-custom",
+            "internet-service6-src-custom-group",
         ),
-        integer_fields=_fields(
-            "policyid",
-            "session_ttl",
-        ),
+
         scalar_fields=_fields(
             "name",
             "status",
@@ -453,25 +413,34 @@ register_section(
             "schedule",
             "nat",
             "ippool",
-            "srcaddr_negate",
-            "dstaddr_negate",
-            "srcaddr6_negate",
-            "dstaddr6_negate",
-            "service_negate",
-            "internet_service",
-            "internet_service_src",
-            "utm_status",
-            "inspection_mode",
-            "profile_type",
-            "profile_group",
-            "av_profile",
-            "ips_sensor",
-            "application_list",
-            "webfilter_profile",
-            "dnsfilter_profile",
-            "ssl_ssh_profile",
+
+            "session-ttl",
+
+            "srcaddr-negate",
+            "dstaddr-negate",
+            "srcaddr6-negate",
+            "dstaddr6-negate",
+            "service-negate",
+
+            "internet-service",
+            "internet-service-src",
+
+            "utm-status",
+            "inspection-mode",
+            "profile-type",
+            "profile-group",
+
+            "av-profile",
+            "ips-sensor",
+            "application-list",
+            "webfilter-profile",
+            "dnsfilter-profile",
+            "ssl-ssh-profile",
+
             "logtraffic",
             "comments",
+
+            "vpntunnel",
         ),
     )
 )
@@ -485,26 +454,26 @@ register_section(
     SectionSpec(
         source_path="firewall ippool",
         list_fields=_fields(
-            "exclude_ip",
+            "exclude-ip",
         ),
         integer_fields=_fields(
             "startport",
             "endport",
-            "block_size",
-            "port_per_user",
+            "block-size",
+            "port-per-user",
         ),
         scalar_fields=_fields(
             "type",
             "startip",
             "endip",
-            "source_startip",
-            "source_endip",
-            "associated_interface",
-            "arp_reply",
-            "arp_intf",
-            "permit_any_host",
+            "source-startip",
+            "source-endip",
+            "associated-interface",
+            "arp-reply",
+            "arp-intf",
+            "permit-any-host",
             "nat64",
-            "add_nat64_route",
+            "add-nat64-route",
             "comments",
         ),
     )
@@ -516,7 +485,6 @@ register_section(
         list_fields=_fields(
             "extaddr",
             "mappedip",
-            "mapped_addr",
             "monitor",
             "service",
         ),
@@ -526,14 +494,15 @@ register_section(
             "type",
             "extip",
             "extintf",
+            "mapped-addr",
             "portforward",
             "protocol",
             "extport",
             "mappedport",
-            "arp_reply",
-            "nat_source_vip",
-            "ldb_method",
-            "server_type",
+            "arp-reply",
+            "nat-source-vip",
+            "ldb-method",
+            "server-type",
             "comment",
         ),
     )
@@ -546,7 +515,6 @@ register_section(
             "monitor",
         ),
         integer_fields=_fields(
-            "id",
             "port",
             "weight",
         ),
@@ -581,7 +549,7 @@ register_section(
     SectionSpec(
         source_path="router static",
         list_fields=_fields(
-            "sdwan_zone",
+            "sdwan-zone",
         ),
         integer_fields=_fields(
             "distance",
@@ -594,9 +562,9 @@ register_section(
             "dstaddr",
             "device",
             "gateway",
-            "dynamic_gateway",
+            "dynamic-gateway",
             "src",
-            "preferred_source",
+            "preferred-source",
             "status",
             "blackhole",
             "comment",
@@ -614,7 +582,6 @@ register_section(
         source_path="vpn ipsec phase1-interface",
         list_fields=_fields(
             "proposal",
-            "dhgrp",
             "certificate",
         ),
         integer_fields=_fields(
@@ -622,26 +589,22 @@ register_section(
             "distance",
             "priority",
         ),
+        integer_list_fields=_fields(
+            "dhgrp",
+        ),
         scalar_fields=_fields(
             "type",
             "interface",
-            "local_gw",
-            "remote_gw",
-            "remotegw_ddns",
-            "ike_version",
+            "local-gw",
+            "remote-gw",
+            "remotegw-ddns",
+            "ike-version",
             "authmethod",
             "nattraversal",
             "dpd",
             "localid",
             "peerid",
             "comments",
-        ),
-        secret_fields=_fields(
-            "psksecret",
-            "psksecret_remote",
-            "ppk_secret",
-            "authpasswd",
-            "group_authentication_secret",
         ),
     )
 )
@@ -651,30 +614,32 @@ register_section(
         source_path="vpn ipsec phase2-interface",
         list_fields=_fields(
             "proposal",
-            "dhgrp",
-            "src_name",
-            "dst_name",
         ),
         integer_fields=_fields(
             "keylifeseconds",
             "keylifekbs",
             "protocol",
-            "src_port",
-            "dst_port",
+            "src-port",
+            "dst-port",
+        ),
+        integer_list_fields=_fields(
+            "dhgrp",
         ),
         scalar_fields=_fields(
             "phase1name",
             "pfs",
-            "src_addr_type",
-            "src_subnet",
-            "src_start_ip",
-            "src_end_ip",
-            "dst_addr_type",
-            "dst_subnet",
-            "dst_start_ip",
-            "dst_end_ip",
+            "src-addr-type",
+            "src-subnet",
+            "src-start-ip",
+            "src-end-ip",
+            "src-name",
+            "dst-addr-type",
+            "dst-subnet",
+            "dst-start-ip",
+            "dst-end-ip",
+            "dst-name",
             "replay",
-            "auto_negotiate",
+            "auto-negotiate",
             "comments",
         ),
     )
@@ -689,22 +654,23 @@ register_section(
     SectionSpec(
         source_path="system dhcp server",
         integer_fields=_fields(
-            "lease_time",
+            "lease-time",
         ),
         scalar_fields=_fields(
             "status",
             "interface",
-            "server_type",
-            "ip_mode",
-            "default_gateway",
+            "server-type",
+            "ip-mode",
+            "default-gateway",
             "netmask",
-            "dns_service",
-            "dns_server1",
-            "dns_server2",
-            "dns_server3",
-            "dns_server4",
-            "timezone_option",
+            "dns-service",
+            "dns-server1",
+            "dns-server2",
+            "dns-server3",
+            "dns-server4",
+            "timezone-option",
             "timezone",
+            "relay-agent",
         ),
     )
 )
@@ -713,12 +679,11 @@ register_section(
     SectionSpec(
         source_path="system dhcp server ip-range",
         integer_fields=_fields(
-            "id",
-            "lease_time",
+            "lease-time",
         ),
         scalar_fields=_fields(
-            "start_ip",
-            "end_ip",
+            "start-ip",
+            "end-ip",
         ),
     )
 )
@@ -727,11 +692,11 @@ register_section(
     SectionSpec(
         source_path="system dhcp server exclude-range",
         integer_fields=_fields(
-            "id",
+            "lease-time",
         ),
         scalar_fields=_fields(
-            "start_ip",
-            "end_ip",
+            "start-ip",
+            "end-ip",
         ),
     )
 )
@@ -739,9 +704,6 @@ register_section(
 register_section(
     SectionSpec(
         source_path="system dhcp server reserved-address",
-        integer_fields=_fields(
-            "id",
-        ),
         scalar_fields=_fields(
             "ip",
             "mac",
@@ -762,7 +724,7 @@ register_section(
         source_path="system sdwan",
         scalar_fields=_fields(
             "status",
-            "load_balance_mode",
+            "load-balance-mode",
         ),
     )
 )
@@ -771,12 +733,12 @@ register_section(
     SectionSpec(
         source_path="system sdwan zone",
         integer_fields=_fields(
-            "minimum_sla_meet_members",
+            "minimum-sla-meet-members",
         ),
         scalar_fields=_fields(
-            "advpn_health_check",
-            "advpn_select",
-            "service_sla_tie_break",
+            "advpn-health-check",
+            "advpn-select",
+            "service-sla-tie-break",
         ),
     )
 )
@@ -785,7 +747,6 @@ register_section(
     SectionSpec(
         source_path="system sdwan members",
         integer_fields=_fields(
-            "seq_num",
             "priority",
             "cost",
             "weight",
@@ -803,9 +764,8 @@ register_section(
 register_section(
     SectionSpec(
         source_path="system sdwan health-check",
-        list_fields=_fields(
+        integer_list_fields=_fields(
             "members",
-            "server",
         ),
         integer_fields=_fields(
             "interval",
@@ -814,6 +774,7 @@ register_section(
         ),
         scalar_fields=_fields(
             "protocol",
+            "server",
         ),
     )
 )
@@ -824,13 +785,11 @@ register_section(
         list_fields=_fields(
             "src",
             "dst",
-            "service",
-            "priority_members",
-            "priority_zone",
-            "health_check",
+            "priority-zone",
+            "health-check",
         ),
-        integer_fields=_fields(
-            "id",
+        integer_list_fields=_fields(
+            "priority-members",
         ),
         scalar_fields=_fields(
             "name",
@@ -849,25 +808,25 @@ register_section(
     SectionSpec(
         source_path="vpn ssl settings",
         list_fields=_fields(
-            "source_interface",
-            "source_address",
-            "source_address6",
-            "tunnel_ip_pools",
-            "tunnel_ipv6_pools",
+            "source-interface",
+            "source-address",
+            "source-address6",
+            "tunnel-ip-pools",
+            "tunnel-ipv6-pools",
         ),
         integer_fields=_fields(
-            "auth_timeout",
-            "idle_timeout",
+            "auth-timeout",
+            "idle-timeout",
             "port",
         ),
         scalar_fields=_fields(
             "status",
-            "ssl_min_proto_ver",
-            "ssl_max_proto_ver",
-            "dns_server1",
-            "dns_server2",
+            "ssl-min-proto-ver",
+            "ssl-max-proto-ver",
+            "dns-server1",
+            "dns-server2",
             "servercert",
-            "default_portal",
+            "default-portal",
         ),
     )
 )
@@ -876,21 +835,21 @@ register_section(
     SectionSpec(
         source_path="vpn ssl web portal",
         list_fields=_fields(
-            "ip_pools",
-            "ipv6_pools",
-            "split_tunneling_routing_address",
-            "ipv6_split_tunneling_routing_address",
-            "host_check_policy",
+            "ip-pools",
+            "ipv6-pools",
+            "split-tunneling-routing-address",
+            "ipv6-split-tunneling-routing-address",
+            "host-check-policy",
         ),
         scalar_fields=_fields(
-            "tunnel_mode",
-            "ipv6_tunnel_mode",
-            "split_tunneling",
-            "ipv6_split_tunneling",
-            "limit_user_logins",
-            "forticlient_download",
-            "web_mode",
-            "host_check",
+            "tunnel-mode",
+            "ipv6-tunnel-mode",
+            "split-tunneling",
+            "ipv6-split-tunneling",
+            "limit-user-logins",
+            "forticlient-download",
+            "web-mode",
+            "host-check",
         ),
     )
 )
@@ -901,7 +860,7 @@ register_section(
         scalar_fields=_fields(
             "guid",
             "type",
-            "os_type",
+            "os-type",
             "version",
         ),
     )
@@ -910,9 +869,6 @@ register_section(
 register_section(
     SectionSpec(
         source_path="vpn ssl web host-check-software check-item-list",
-        integer_fields=_fields(
-            "id",
-        ),
         list_fields=_fields(
             "md5s",
         ),
@@ -921,6 +877,29 @@ register_section(
             "type",
             "target",
             "version",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="vpn ssl settings authentication-rule",
+        list_fields=_fields(
+            "groups",
+            "users",
+            "source-address",
+            "source-address6",
+            "source-interface",
+        ),
+        scalar_fields=_fields(
+            "auth",
+            "cipher",
+            "client-cert",
+            "portal",
+            "realm",
+            "source-address-negate",
+            "source-address6-negate",
+            "user-peer",
         ),
     )
 )
@@ -935,29 +914,30 @@ register_section(
         source_path="user local",
         integer_fields=_fields(
             "id",
+            "auth-concurrent-value",
+            "authtimeout",
         ),
         scalar_fields=_fields(
-            "status",
-            "type",
-            "passwd_time",
-            "passwd_policy",
-            "ldap_server",
-            "radius_server",
-            "tacacs_server",
-            "two_factor",
-            "two_factor_authentication",
-            "two_factor_notification",
+            "auth-concurrent-override",
+            "email-to",
             "fortitoken",
-            "email_to",
-            "sms_phone",
-            "sms_server",
-            "sms_custom_server",
+            "ldap-server",
+            "passwd-policy",
+            "passwd-time",
+            "ppk-identity",
+            "qkd-profile",
+            "radius-server",
+            "sms-custom-server",
+            "sms-phone",
+            "sms-server",
+            "status",
+            "tacacs+-server",
+            "two-factor",
+            "two-factor-authentication",
+            "two-factor-notification",
+            "type",
+            "username-sensitivity",
             "workstation",
-            "username_sensitivity",
-        ),
-        secret_fields=_fields(
-            "passwd",
-            "ppk_secret",
         ),
     )
 )
@@ -971,11 +951,11 @@ register_section(
         integer_fields=_fields(
             "id",
             "authtimeout",
-            "auth_concurrent_value",
+            "auth-concurrent-value",
         ),
         scalar_fields=_fields(
-            "group_type",
-            "auth_concurrent_override",
+            "group-type",
+            "auth-concurrent-override",
         ),
     )
 )
@@ -983,12 +963,24 @@ register_section(
 register_section(
     SectionSpec(
         source_path="user group match",
-        integer_fields=_fields(
-            "id",
-        ),
         scalar_fields=_fields(
-            "server_name",
-            "group_name",
+            "server-name",
+            "group-name",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="user group guest",
+        scalar_fields=_fields(
+            "comment",
+            "email",
+            "expiration",
+            "mobile-phone",
+            "name",
+            "sponsor",
+            "user-id",
         ),
     )
 )
@@ -1003,47 +995,27 @@ register_section(
         source_path="system admin",
         list_fields=_fields(
             "vdom",
+            "guest-usergroups",
         ),
         scalar_fields=_fields(
             "accprofile",
-            "trusthost1",
-            "trusthost2",
-            "trusthost3",
-            "trusthost4",
-            "trusthost5",
-            "trusthost6",
-            "trusthost7",
-            "trusthost8",
-            "trusthost9",
-            "trusthost10",
-            "ip6_trusthost1",
-            "ip6_trusthost2",
-            "ip6_trusthost3",
-            "ip6_trusthost4",
-            "ip6_trusthost5",
-            "ip6_trusthost6",
-            "ip6_trusthost7",
-            "ip6_trusthost8",
-            "ip6_trusthost9",
-            "ip6_trusthost10",
-            "two_factor",
-            "two_factor_authentication",
-            "two_factor_notification",
-            "fortitoken",
-            "email_to",
-            "sms_phone",
-            "remote_auth",
-            "remote_group",
-            "peer_auth",
-            "peer_group",
-            "schedule",
+            "accprofile-override",
             "comments",
-        ),
-        secret_fields=_fields(
-            "password",
-            "ssh_public_key1",
-            "ssh_public_key2",
-            "ssh_public_key3",
+            "email-to",
+            "fortitoken",
+            "guest-auth",
+            "peer-auth",
+            "peer-group",
+            "remote-auth",
+            "remote-group",
+            "schedule",
+            "sms-custom-server",
+            "sms-phone",
+            "sms-server",
+            "ssh-certificate",
+            "two-factor",
+            "two-factor-authentication",
+            "two-factor-notification",
         ),
     )
 )
@@ -1055,25 +1027,98 @@ register_section(
             "admintimeout",
         ),
         scalar_fields=_fields(
+            "admintimeout-override",
             "authgrp",
+            "cli-config",
+            "cli-diagnose",
+            "cli-exec",
+            "cli-get",
+            "cli-show",
+            "comments",
             "ftviewgrp",
             "fwgrp",
             "loggrp",
             "netgrp",
+            "scope",
             "secfabgrp",
             "sysgrp",
+            "system-execute-ssh",
+            "system-execute-telnet",
             "utmgrp",
             "vpngrp",
             "wanoptgrp",
             "wifi",
-            "scope",
-            "cli_config",
-            "cli_diagnose",
-            "cli_exec",
-            "cli_get",
-            "cli_show",
-            "admintimeout_override",
-            "comments",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="system accprofile fwgrp-permission",
+        scalar_fields=_fields(
+            "address",
+            "others",
+            "policy",
+            "schedule",
+            "service",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="system accprofile loggrp-permission",
+        scalar_fields=_fields(
+            "config",
+            "data-access",
+            "report-access",
+            "threat-weight",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="system accprofile netgrp-permission",
+        scalar_fields=_fields(
+            "cfg",
+            "packet-capture",
+            "route-cfg",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="system accprofile sysgrp-permission",
+        scalar_fields=_fields(
+            "admin",
+            "cfg",
+            "mnt",
+            "upd",
+        ),
+    )
+)
+
+register_section(
+    SectionSpec(
+        source_path="system accprofile utmgrp-permission",
+        scalar_fields=_fields(
+            "antivirus",
+            "application-control",
+            "casb",
+            "dlp",
+            "dnsfilter",
+            "emailfilter",
+            "endpoint-control",
+            "file-filter",
+            "icap",
+            "ips",
+            "videofilter",
+            "virtual-patch",
+            "voip",
+            "waf",
+            "webfilter",
         ),
     )
 )
@@ -1088,10 +1133,10 @@ register_section(
         source_path="ips sensor",
         scalar_fields=_fields(
             "comment",
-            "block_malicious_url",
-            "scan_botnet_connections",
-            "extended_log",
-            "replacemsg_group",
+            "block-malicious-url",
+            "scan-botnet-connections",
+            "extended-log",
+            "replacemsg-group",
         ),
     )
 )
@@ -1100,34 +1145,35 @@ register_section(
     SectionSpec(
         source_path="ips sensor entries",
         list_fields=_fields(
-            "rule",
             "cve",
+        ),
+        integer_fields=_fields(
+            "rate-count",
+            "rate-duration",
+        ),
+        integer_list_fields=_fields(
+            "rule",
+            "vuln-type",
+        ),
+        scalar_fields=_fields(
             "application",
             "os",
             "protocol",
             "severity",
             "location",
-            "vuln_type",
-        ),
-        integer_fields=_fields(
-            "id",
-            "rate_count",
-            "rate_duration",
-        ),
-        scalar_fields=_fields(
             "action",
-            "default_action",
-            "default_status",
+            "default-action",
+            "default-status",
             "status",
             "log",
-            "log_packet",
-            "log_attack_context",
+            "log-packet",
+            "log-attack-context",
             "quarantine",
-            "quarantine_expiry",
-            "quarantine_log",
-            "rate_mode",
-            "rate_track",
-            "last_modified",
+            "quarantine-expiry",
+            "quarantine-log",
+            "rate-mode",
+            "rate-track",
+            "last-modified",
         ),
     )
 )
@@ -1135,12 +1181,9 @@ register_section(
 register_section(
     SectionSpec(
         source_path="ips sensor entries exempt-ip",
-        integer_fields=_fields(
-            "id",
-        ),
         scalar_fields=_fields(
-            "src_ip",
-            "dst_ip",
+            "src-ip",
+            "dst-ip",
         ),
     )
 )
@@ -1154,27 +1197,27 @@ register_section(
     SectionSpec(
         source_path="firewall profile-group",
         scalar_fields=_fields(
-            "application_list",
-            "av_profile",
-            "casb_profile",
-            "cifs_profile",
-            "diameter_filter_profile",
-            "dlp_profile",
-            "dnsfilter_profile",
-            "emailfilter_profile",
-            "file_filter_profile",
-            "icap_profile",
-            "ips_sensor",
-            "ips_voip_filter",
-            "profile_protocol_options",
-            "sctp_filter_profile",
-            "ssh_filter_profile",
-            "ssl_ssh_profile",
-            "videofilter_profile",
-            "virtual_patch_profile",
-            "voip_profile",
-            "waf_profile",
-            "webfilter_profile",
+            "application-list",
+            "av-profile",
+            "casb-profile",
+            "cifs-profile",
+            "diameter-filter-profile",
+            "dlp-profile",
+            "dnsfilter-profile",
+            "emailfilter-profile",
+            "file-filter-profile",
+            "icap-profile",
+            "ips-sensor",
+            "ips-voip-filter",
+            "profile-protocol-options",
+            "sctp-filter-profile",
+            "ssh-filter-profile",
+            "ssl-ssh-profile",
+            "videofilter-profile",
+            "virtual-patch-profile",
+            "voip-profile",
+            "waf-profile",
+            "webfilter-profile",
         ),
     )
 )
@@ -1189,17 +1232,13 @@ def get_section_capability(
     encountered_fields: Iterable[str] = (),
 ) -> dict[str, object]:
     """
-    Describe how much of one section is currently declared.
+    Describe which raw source fields are currently declared.
 
-    Useful for diagnostics/tests, not normal extraction behavior.
+    Intended for diagnostics and tests rather than normal extraction.
     """
 
     spec = get_section_spec(source_path)
-
-    encountered = {
-        field.replace("-", "_")
-        for field in encountered_fields
-    }
+    encountered = set(encountered_fields)
 
     if spec is None:
         return {
@@ -1214,7 +1253,6 @@ def get_section_capability(
         | spec.integer_fields
         | spec.integer_list_fields
         | spec.scalar_fields
-        | spec.secret_fields
     )
 
     return {

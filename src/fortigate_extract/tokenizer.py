@@ -14,7 +14,6 @@ class TokenType(enum.Enum):
     END = "end"
 
     # Recognized but normally not expected in exported configuration.
-    SELECT = "select"
 
     STRING = "string"
     COMMENT = "comment"
@@ -27,9 +26,6 @@ class Token:
     value: str
     line_number: int
 
-
-class TokenizerError(Exception):
-    pass
 
 
 class FortiGateTokenizer:
@@ -71,10 +67,13 @@ class FortiGateTokenizer:
 
             try:
                 parts = self._split_command(logical_command)
-            except ValueError:
-                # Most commonly an unfinished quoted value.
-                # Continue accumulating physical lines.
-                continue
+            except ValueError as exc:
+                if self._is_incomplete_command(exc):
+                    continue
+
+                raise TokenizerError(
+                    f"Malformed syntax at line {start_line_number}: {exc}"
+                ) from exc
 
             assert start_line_number is not None
 
@@ -145,3 +144,10 @@ class FortiGateTokenizer:
                 part,
                 line_number,
             )
+
+@staticmethod
+def _is_incomplete_command(error: ValueError) -> bool:
+    return str(error) in {
+        "No closing quotation",
+        "No escaped character",
+    }

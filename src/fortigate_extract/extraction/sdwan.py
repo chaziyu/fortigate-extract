@@ -1,244 +1,214 @@
 from __future__ import annotations
 
-from model.config import FGConfig
-from model.sdwan import (
+from typing import Protocol
+
+from ..model.sdwan import (
     FGSDWAN,
     FGSDWANHealthCheck,
     FGSDWANMember,
     FGSDWANService,
     FGSDWANZone,
 )
-from nodes import ConfigNode, FortiGateConfigTree
+from ..nodes import (
+    ConfigNode,
+    FortiGateConfigTree,
+)
 
 from .common import (
+    evaluate_config,
     evaluate_edit,
-    iter_section_edits,
+    iter_section_configs,
     source_model_kwargs,
 )
 
 
+class SDWANConfig(Protocol):
+    """Minimal destination required by SD-WAN extraction."""
+
+    sdwans: list[FGSDWAN]
+
+
 def extract_sdwan(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: SDWANConfig,
 ) -> None:
     """
-    Extract SD-WAN configuration per VDOM.
+    Extract FortiGate SD-WAN source configuration.
 
-    One FGSDWAN aggregate is created for each VDOM where SD-WAN
-    configuration is encountered.
+    One FGSDWAN object is created for each VDOM containing
+    `config system sdwan`.
     """
 
-    sdwan_by_vdom: dict[str, FGSDWAN] = {}
+    section_path = "system sdwan"
 
-    _extract_sdwan_root(
+    for source in iter_section_configs(
         tree,
-        sdwan_by_vdom,
-    )
-
-    _extract_zones(
-        tree,
-        sdwan_by_vdom,
-    )
-
-    _extract_members(
-        tree,
-        sdwan_by_vdom,
-    )
-
-    _extract_health_checks(
-        tree,
-        sdwan_by_vdom,
-    )
-
-    _extract_services(
-        tree,
-        sdwan_by_vdom,
-    )
-
-    config.sdwans.extend(
-        sdwan_by_vdom.values()
-    )
-
-
-def _get_sdwan(
-    sdwan_by_vdom: dict[str, FGSDWAN],
-    vdom: str,
-) -> FGSDWAN:
-    item = sdwan_by_vdom.get(vdom)
-
-    if item is None:
-        item = FGSDWAN(
-            vdom=vdom,
-        )
-        sdwan_by_vdom[vdom] = item
-
-    return item
-
-
-def _extract_sdwan_root(
-    tree: FortiGateConfigTree,
-    sdwan_by_vdom: dict[str, FGSDWAN],
-) -> None:
-    """
-    Extract commands directly under `config system sdwan`.
-
-    This requires section-level command traversal rather than edit traversal.
-    """
-
-    for section, vdom in _iter_config_sections(
-        tree,
-        "system sdwan",
+        section_path,
     ):
-        evaluation = evaluate_edit_like_config(
-            "system sdwan",
-            section,
+        evaluation = evaluate_config(
+            section_path,
+            source.config,
         )
 
-        sdwan = _get_sdwan(
-            sdwan_by_vdom,
-            vdom,
+        attributes = source_model_kwargs(
+            evaluation,
+            model_type=FGSDWAN,
+            vdom=source.vdom,
         )
 
-        for key, value in evaluation.attributes.items():
-            if hasattr(sdwan, key):
-                setattr(sdwan, key, value)
-            else:
-                sdwan.raw_extra[key] = value
+        sdwan = FGSDWAN(**attributes)
 
-        sdwan.explicit_fields.update(
-            evaluation.explicit_fields
-        )
+        for child in source.config.children:
+            if child.name == "zone":
+                sdwan.zones.extend(
+                    _extract_zones(child)
+                )
 
-        sdwan.raw_extra.update(
-            evaluation.extra_settings
-        )
+            elif child.name == "members":
+                sdwan.members.extend(
+                    _extract_members(child)
+                )
+
+            elif child.name == "health-check":
+                sdwan.health_checks.extend(
+                    _extract_health_checks(child)
+                )
+
+            elif child.name == "service":
+                sdwan.services.extend(
+                    _extract_services(child)
+                )
+
+        config.sdwans.append(sdwan)
 
 
 def _extract_zones(
-    tree: FortiGateConfigTree,
-    sdwan_by_vdom: dict[str, FGSDWAN],
-) -> None:
+    section: ConfigNode,
+) -> list[FGSDWANZone]:
+    result: list[FGSDWANZone] = []
+
     section_path = "system sdwan zone"
 
-    for source in iter_section_edits(
-        tree,
-        section_path,
-    ):
+    for edit in section.edits:
         evaluation = evaluate_edit(
             section_path,
-            source.edit,
+            edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
-            name=source.edit.name,
+            model_type=FGSDWANZone,
+            name=edit.name,
         )
 
-        _get_sdwan(
-            sdwan_by_vdom,
-            source.vdom,
-        ).zones.append(
+        result.append(
             FGSDWANZone(**attributes)
         )
 
+    return result
+
 
 def _extract_members(
-    tree: FortiGateConfigTree,
-    sdwan_by_vdom: dict[str, FGSDWAN],
-) -> None:
+    section: ConfigNode,
+) -> list[FGSDWANMember]:
+    result: list[FGSDWANMember] = []
+
     section_path = "system sdwan members"
 
-    for source in iter_section_edits(
-        tree,
-        section_path,
-    ):
+    for edit in section.edits:
         evaluation = evaluate_edit(
             section_path,
-            source.edit,
+            edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGSDWANMember,
         )
 
+        # FortiGate source identity:
+        #
+        # config members
+        #     edit <seq-num>
+        #
         try:
             attributes["seq_num"] = int(
-                source.edit.name
+                edit.name
             )
         except ValueError:
-            attributes["raw_extra"]["unparsed_seq_num"] = (
-                source.edit.name
-            )
-            continue
+            attributes["seq_num"] = None
+            attributes["raw_extra"][
+                "unparsed_seq_num"
+            ] = edit.name
 
-        _get_sdwan(
-            sdwan_by_vdom,
-            source.vdom,
-        ).members.append(
+        result.append(
             FGSDWANMember(**attributes)
         )
 
+    return result
+
 
 def _extract_health_checks(
-    tree: FortiGateConfigTree,
-    sdwan_by_vdom: dict[str, FGSDWAN],
-) -> None:
+    section: ConfigNode,
+) -> list[FGSDWANHealthCheck]:
+    result: list[FGSDWANHealthCheck] = []
+
     section_path = "system sdwan health-check"
 
-    for source in iter_section_edits(
-        tree,
-        section_path,
-    ):
+    for edit in section.edits:
         evaluation = evaluate_edit(
             section_path,
-            source.edit,
+            edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
-            name=source.edit.name,
+            model_type=FGSDWANHealthCheck,
+            name=edit.name,
         )
 
-        _get_sdwan(
-            sdwan_by_vdom,
-            source.vdom,
-        ).health_checks.append(
+        result.append(
             FGSDWANHealthCheck(**attributes)
         )
 
+    return result
+
 
 def _extract_services(
-    tree: FortiGateConfigTree,
-    sdwan_by_vdom: dict[str, FGSDWAN],
-) -> None:
+    section: ConfigNode,
+) -> list[FGSDWANService]:
+    result: list[FGSDWANService] = []
+
     section_path = "system sdwan service"
 
-    for source in iter_section_edits(
-        tree,
-        section_path,
-    ):
+    for edit in section.edits:
         evaluation = evaluate_edit(
             section_path,
-            source.edit,
+            edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGSDWANService,
         )
 
+        # FortiGate source identity:
+        #
+        # config service
+        #     edit <id>
+        #
         try:
             attributes["id"] = int(
-                source.edit.name
+                edit.name
             )
         except ValueError:
-            attributes["raw_extra"]["unparsed_id"] = (
-                source.edit.name
-            )
-            continue
+            attributes["id"] = None
+            attributes["raw_extra"][
+                "unparsed_id"
+            ] = edit.name
 
-        _get_sdwan(
-            sdwan_by_vdom,
-            source.vdom,
-        ).services.append(
+        result.append(
             FGSDWANService(**attributes)
         )
+
+    return result

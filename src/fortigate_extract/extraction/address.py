@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from model.address import (
+from typing import Protocol
+
+from ..model.address import (
     FGAddress,
     FGAddressGroup,
     FGAddressGroupTaggingEntry,
+    FGAddressTaggingEntry,
     FGWildcardFQDN,
 )
-from model.config import FGConfig
-from nodes import FortiGateConfigTree
+from ..nodes import (
+    ConfigNode,
+    FortiGateConfigTree,
+)
 
 from .common import (
     evaluate_edit,
@@ -17,20 +22,37 @@ from .common import (
 )
 
 
+class AddressConfig(Protocol):
+    """
+    Minimal destination required by address extraction.
+
+    This avoids coupling the address extractor to a large aggregate
+    configuration model.
+    """
+
+    addresses: list[FGAddress]
+    address_groups: list[FGAddressGroup]
+    wildcard_fqdns: list[FGWildcardFQDN]
+
+
 def extract_addresses(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: AddressConfig,
 ) -> None:
+    """Extract FortiGate address-domain source objects."""
+
     _extract_address_family(
         tree,
         config,
         section_path="firewall address",
+        address_family="ipv4",
     )
 
     _extract_address_family(
         tree,
         config,
         section_path="firewall address6",
+        address_family="ipv6",
     )
 
     _extract_address_groups(
@@ -53,9 +75,10 @@ def extract_addresses(
 
 def _extract_address_family(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: AddressConfig,
     *,
     section_path: str,
+    address_family: str,
 ) -> None:
     for source in iter_section_edits(
         tree,
@@ -68,26 +91,69 @@ def _extract_address_family(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGAddress,
             name=source.edit.name,
             vdom=source.vdom,
         )
 
-        # Address family is derived from source section,
-        # not invented as a source CLI field.
-        attributes["address_family"] = (
-            "ipv6"
-            if section_path.endswith("address6")
-            else "ipv4"
-        )
+        attributes["address_family"] = address_family
+
+        # Object tagging is currently declared for:
+        #
+        # config firewall address
+        #     edit ...
+        #         config tagging
+        #
+        # Do not invent equivalent address6 behavior unless it is
+        # explicitly supported by the source registry/reference.
+        if section_path == "firewall address":
+            tagging = get_child_config(
+                source.edit,
+                "tagging",
+            )
+
+            attributes["tagging"] = (
+                _extract_address_tagging(tagging)
+                if tagging is not None
+                else []
+            )
 
         config.addresses.append(
             FGAddress(**attributes)
         )
 
 
+def _extract_address_tagging(
+    section: ConfigNode,
+) -> list[FGAddressTaggingEntry]:
+    result: list[FGAddressTaggingEntry] = []
+
+    section_path = "firewall address tagging"
+
+    for edit in section.edits:
+        evaluation = evaluate_edit(
+            section_path,
+            edit,
+        )
+
+        attributes = source_model_kwargs(
+            evaluation,
+            model_type=FGAddressTaggingEntry,
+            name=edit.name,
+        )
+
+        result.append(
+            FGAddressTaggingEntry(
+                **attributes
+            )
+        )
+
+    return result
+
+
 def _extract_address_groups(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: AddressConfig,
     *,
     section_path: str,
 ) -> None:
@@ -102,33 +168,27 @@ def _extract_address_groups(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGAddressGroup,
             name=source.edit.name,
             vdom=source.vdom,
+            field_map={
+                "member": "members",
+                "exclude_member": "exclude_members",
+            },
         )
 
-        if "member" in attributes:
-            attributes["members"] = attributes.pop(
-                "member"
+        # Tagging is currently explicitly declared for firewall addrgrp.
+        if section_path == "firewall addrgrp":
+            tagging = get_child_config(
+                source.edit,
+                "tagging",
             )
 
-        if "exclude_member" in attributes:
-            attributes["exclude_members"] = (
-                attributes.pop("exclude_member")
+            attributes["tagging"] = (
+                _extract_group_tagging(tagging)
+                if tagging is not None
+                else []
             )
-
-        tagging = get_child_config(
-            source.edit,
-            "tagging",
-        )
-
-        attributes["tagging"] = (
-            _extract_group_tagging(
-                tagging,
-                section_path=section_path,
-            )
-            if tagging
-            else []
-        )
 
         config.address_groups.append(
             FGAddressGroup(**attributes)
@@ -136,22 +196,21 @@ def _extract_address_groups(
 
 
 def _extract_group_tagging(
-    section,
-    *,
-    section_path: str,
+    section: ConfigNode,
 ) -> list[FGAddressGroupTaggingEntry]:
-    result = []
+    result: list[FGAddressGroupTaggingEntry] = []
 
-    tagging_path = f"{section_path} tagging"
+    section_path = "firewall addrgrp tagging"
 
     for edit in section.edits:
         evaluation = evaluate_edit(
-            tagging_path,
+            section_path,
             edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGAddressGroupTaggingEntry,
             name=edit.name,
         )
 
@@ -166,7 +225,7 @@ def _extract_group_tagging(
 
 def _extract_wildcard_fqdns(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: AddressConfig,
 ) -> None:
     section_path = "firewall wildcard-fqdn custom"
 
@@ -181,6 +240,7 @@ def _extract_wildcard_fqdns(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGWildcardFQDN,
             name=source.edit.name,
             vdom=source.vdom,
         )

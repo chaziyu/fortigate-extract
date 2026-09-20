@@ -8,13 +8,18 @@ class FGSDWANZone(BaseModel):
 
     minimum_sla_meet_members: int | None = None
 
-    raw_extra: dict[str, Any] = Field(default_factory=dict)
-    explicit_fields: set[str] = Field(default_factory=set)
+    raw_extra: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    explicit_fields: set[str] = Field(
+        default_factory=set
+    )
 
 
 class FGSDWANMember(BaseModel):
-    seq_num: int
+    seq_num: int | None = None
 
+    # Direct source relationships.
     interface: str | None = None
     zone: str | None = None
 
@@ -27,8 +32,12 @@ class FGSDWANMember(BaseModel):
 
     status: str | None = None
 
-    raw_extra: dict[str, Any] = Field(default_factory=dict)
-    explicit_fields: set[str] = Field(default_factory=set)
+    raw_extra: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    explicit_fields: set[str] = Field(
+        default_factory=set
+    )
 
 
 class FGSDWANHealthCheck(BaseModel):
@@ -37,34 +46,58 @@ class FGSDWANHealthCheck(BaseModel):
     protocol: str | None = None
     server: str | None = None
 
-    members: list[int] = Field(default_factory=list)
+    # References SD-WAN member sequence numbers.
+    members: list[int] = Field(
+        default_factory=list
+    )
 
     interval: int | None = None
     failtime: int | None = None
     recoverytime: int | None = None
 
-    raw_extra: dict[str, Any] = Field(default_factory=dict)
-    explicit_fields: set[str] = Field(default_factory=set)
+    raw_extra: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    explicit_fields: set[str] = Field(
+        default_factory=set
+    )
 
 
 class FGSDWANService(BaseModel):
-    id: int
+    id: int | None = None
 
     name: str | None = None
-
     mode: str | None = None
     status: str | None = None
 
-    src: list[str] = Field(default_factory=list)
-    dst: list[str] = Field(default_factory=list)
+    src: list[str] = Field(
+        default_factory=list
+    )
+    dst: list[str] = Field(
+        default_factory=list
+    )
 
-    priority_members: list[int] = Field(default_factory=list)
-    priority_zone: list[str] = Field(default_factory=list)
+    # References SD-WAN member sequence numbers.
+    priority_members: list[int] = Field(
+        default_factory=list
+    )
 
-    health_check: list[str] = Field(default_factory=list)
+    # References SD-WAN zone names.
+    priority_zone: list[str] = Field(
+        default_factory=list
+    )
 
-    raw_extra: dict[str, Any] = Field(default_factory=dict)
-    explicit_fields: set[str] = Field(default_factory=set)
+    # References SD-WAN health-check names.
+    health_check: list[str] = Field(
+        default_factory=list
+    )
+
+    raw_extra: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    explicit_fields: set[str] = Field(
+        default_factory=set
+    )
 
 
 class FGSDWAN(BaseModel):
@@ -73,10 +106,22 @@ class FGSDWAN(BaseModel):
     status: str | None = None
     load_balance_mode: str | None = None
 
-    zones: list[FGSDWANZone] = Field(default_factory=list)
-    members: list[FGSDWANMember] = Field(default_factory=list)
-    health_checks: list[FGSDWANHealthCheck] = Field(default_factory=list)
-    services: list[FGSDWANService] = Field(default_factory=list)
+    zones: list[FGSDWANZone] = Field(
+        default_factory=list
+    )
+    members: list[FGSDWANMember] = Field(
+        default_factory=list
+    )
+    health_checks: list[FGSDWANHealthCheck] = Field(
+        default_factory=list
+    )
+    services: list[FGSDWANService] = Field(
+        default_factory=list
+    )
 
-    raw_extra: dict[str, Any] = Field(default_factory=dict)
-    explicit_fields: set[str] = Field(default_factory=set)
+    raw_extra: dict[str, Any] = Field(
+        default_factory=dict
+    )
+    explicit_fields: set[str] = Field(
+        default_factory=set
+    )

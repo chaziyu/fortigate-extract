@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from model.interface import (
+from typing import Protocol
+
+from ..model.interface import (
     FGInterface,
     FGInterfaceSecondaryIP,
 )
-from model.config import FGConfig
-from nodes import FortiGateConfigTree
+from ..nodes import (
+    ConfigNode,
+    FortiGateConfigTree,
+)
 
 from .common import (
     evaluate_edit,
@@ -15,34 +19,38 @@ from .common import (
 )
 
 
+class InterfaceConfig(Protocol):
+    """Minimal destination required by interface extraction."""
+
+    interfaces: list[FGInterface]
+
+
 def extract_interfaces(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: InterfaceConfig,
 ) -> None:
+    """Extract FortiGate system-interface source objects."""
+
+    section_path = "system interface"
+
     for source in iter_section_edits(
         tree,
-        "system interface",
+        section_path,
     ):
         evaluation = evaluate_edit(
-            "system interface",
+            section_path,
             source.edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGInterface,
             name=source.edit.name,
             vdom=source.vdom,
+            field_map={
+                "member": "members",
+            },
         )
-
-        # Source CLI:
-        #     set member ...
-        #
-        # Source model:
-        #     members: list[str]
-        if "member" in attributes:
-            attributes["members"] = attributes.pop(
-                "member"
-            )
 
         secondary_config = get_child_config(
             source.edit,
@@ -53,7 +61,7 @@ def extract_interfaces(
             _extract_secondary_ips(
                 secondary_config,
             )
-            if secondary_config
+            if secondary_config is not None
             else []
         )
 
@@ -63,23 +71,27 @@ def extract_interfaces(
 
 
 def _extract_secondary_ips(
-    section,
+    section: ConfigNode,
 ) -> list[FGInterfaceSecondaryIP]:
     result: list[FGInterfaceSecondaryIP] = []
 
+    section_path = "system interface secondaryip"
+
     for edit in section.edits:
         evaluation = evaluate_edit(
-            "system interface secondaryip",
+            section_path,
             edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGInterfaceSecondaryIP,
         )
 
         try:
             attributes["id"] = int(edit.name)
         except ValueError:
+            attributes["id"] = None
             attributes["raw_extra"]["unparsed_id"] = (
                 edit.name
             )

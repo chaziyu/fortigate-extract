@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import re
-
 from .nodes import (
     CommandNode,
+    CommentNode,
     ConfigNode,
     EditNode,
     FortiGateConfigTree,
+    UnknownCommandNode,
 )
+
 from .tokenizer import (
     FortiGateTokenizer,
     Token,
@@ -28,7 +29,6 @@ class FortiGateParser:
         - set / unset / append commands
         - comments
         - source line information
-        - basic config header metadata
 
     Non-responsibilities:
         - FortiOS defaults
@@ -50,9 +50,14 @@ class FortiGateParser:
             token = self.peek()
 
             if token.type == TokenType.COMMENT:
-                comment = self.next_token()
-                tree.comments.append(comment.value)
-                self._parse_header_metadata(tree, comment.value)
+                comment = self.consume(TokenType.COMMENT)
+
+                tree.comments.append(
+                    CommentNode(
+                        value=comment.value,
+                        line_number=comment.line_number,
+                    )
+                )
                 continue
 
             if token.type == TokenType.CONFIG:
@@ -60,7 +65,9 @@ class FortiGateParser:
                 continue
 
             if token.type == TokenType.UNKNOWN:
-                self._skip_line(token.line_number)
+                tree.unknown_commands.append(
+                    self.parse_unknown_command()
+                )
                 continue
 
             raise ParserError(
@@ -118,7 +125,14 @@ class FortiGateParser:
                 continue
 
             if token.type == TokenType.COMMENT:
-                self.next_token()
+                comment = self.consume(TokenType.COMMENT)
+
+                node.comments.append(
+                    CommentNode(
+                        value=comment.value,
+                        line_number=comment.line_number,
+                    )
+                )
                 continue
 
             if token.type == TokenType.UNKNOWN:
@@ -179,11 +193,14 @@ class FortiGateParser:
                 continue
 
             if token.type == TokenType.COMMENT:
-                self.next_token()
-                continue
+                comment = self.consume(TokenType.COMMENT)
 
-            if token.type == TokenType.UNKNOWN:
-                node.commands.append(self.parse_unknown_command())
+                node.comments.append(
+                    CommentNode(
+                        value=comment.value,
+                        line_number=comment.line_number,
+                    )
+                )
                 continue
 
             if token.type == TokenType.EDIT:
@@ -198,6 +215,10 @@ class FortiGateParser:
                     f"{node.name!r} started at "
                     f"line {node.start_line_number}"
                 )
+
+            if token.type == TokenType.UNKNOWN:
+                node.commands.append(self.parse_unknown_command())
+                continue
 
             raise ParserError(
                 f"Unexpected token inside edit {node.name!r}: "
@@ -248,16 +269,15 @@ class FortiGateParser:
             line_number=token.line_number,
         )
 
-    def parse_unknown_command(self) -> CommandNode:
+    def parse_unknown_command(self) -> UnknownCommandNode:
         token = self.consume(TokenType.UNKNOWN)
 
         values = self.read_line_values(
             line_number=token.line_number
         )
 
-        return CommandNode(
-            operation="unknown",
-            key=token.value,
+        return UnknownCommandNode(
+            keyword=token.value,
             values=values,
             line_number=token.line_number,
         )
@@ -313,59 +333,6 @@ class FortiGateParser:
             values.append(self.next_token().value)
 
         return values
-
-    def _skip_line(self, line_number: int) -> None:
-        while (
-            self.peek() is not None
-            and self.peek().line_number == line_number
-        ):
-            self.next_token()
-
-    # ------------------------------------------------------------------
-    # Header metadata
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_header_metadata(
-        tree: FortiGateConfigTree,
-        comment: str,
-    ) -> None:
-        config_version = re.match(
-            r"^#\s*config-version\s*=\s*(.+)$",
-            comment,
-            flags=re.IGNORECASE,
-        )
-
-        if config_version:
-            header = config_version.group(1)
-
-            version = re.search(
-                r"(?:^|-)(\d+\.\d+\.\d+)(?:-|:|$)",
-                header,
-            )
-
-            build = re.search(
-                r"(?:^|-)build(\d+)(?:-|:|$)",
-                header,
-                flags=re.IGNORECASE,
-            )
-
-            if version:
-                tree.source_version = version.group(1)
-
-            if build:
-                tree.source_build = build.group(1)
-
-            return
-
-        build_number = re.match(
-            r"^#\s*buildno\s*=\s*(\d+)",
-            comment,
-            flags=re.IGNORECASE,
-        )
-
-        if build_number and tree.source_build is None:
-            tree.source_build = build_number.group(1)
 
 
 def parse_fortigate_config(

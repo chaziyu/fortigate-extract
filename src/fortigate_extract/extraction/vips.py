@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from model.config import FGConfig
-from model.vip import (
+from typing import Protocol
+
+from ..model.vip import (
     FGVIP,
     FGVIPGroup,
     FGVIPRealServer,
 )
-from nodes import FortiGateConfigTree
+from ..nodes import (
+    ConfigNode,
+    FortiGateConfigTree,
+)
 
 from .common import (
     evaluate_edit,
@@ -16,17 +20,26 @@ from .common import (
 )
 
 
+class VIPConfig(Protocol):
+    """Minimal destination required by VIP extraction."""
+
+    vips: list[FGVIP]
+    vip_groups: list[FGVIPGroup]
+
+
 def extract_vips(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: VIPConfig,
 ) -> None:
-    _extract_vips(tree, config)
+    """Extract FortiGate VIP and VIP-group source objects."""
+
+    _extract_vip_objects(tree, config)
     _extract_vip_groups(tree, config)
 
 
-def _extract_vips(
+def _extract_vip_objects(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: VIPConfig,
 ) -> None:
     section_path = "firewall vip"
 
@@ -41,6 +54,7 @@ def _extract_vips(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGVIP,
             name=source.edit.name,
             vdom=source.vdom,
         )
@@ -52,7 +66,7 @@ def _extract_vips(
 
         attributes["realservers"] = (
             _extract_realservers(realservers)
-            if realservers
+            if realservers is not None
             else []
         )
 
@@ -62,23 +76,27 @@ def _extract_vips(
 
 
 def _extract_realservers(
-    section,
+    section: ConfigNode,
 ) -> list[FGVIPRealServer]:
-    result = []
+    result: list[FGVIPRealServer] = []
+
+    section_path = "firewall vip realservers"
 
     for edit in section.edits:
         evaluation = evaluate_edit(
-            "firewall vip realservers",
+            section_path,
             edit,
         )
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGVIPRealServer,
         )
 
         try:
             attributes["id"] = int(edit.name)
         except ValueError:
+            attributes["id"] = None
             attributes["raw_extra"]["unparsed_id"] = (
                 edit.name
             )
@@ -92,7 +110,7 @@ def _extract_realservers(
 
 def _extract_vip_groups(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: VIPConfig,
 ) -> None:
     section_path = "firewall vipgrp"
 
@@ -107,14 +125,13 @@ def _extract_vip_groups(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGVIPGroup,
             name=source.edit.name,
             vdom=source.vdom,
+            field_map={
+                "member": "members",
+            },
         )
-
-        if "member" in attributes:
-            attributes["members"] = attributes.pop(
-                "member"
-            )
 
         config.vip_groups.append(
             FGVIPGroup(**attributes)

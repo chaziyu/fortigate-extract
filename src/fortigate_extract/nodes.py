@@ -118,20 +118,17 @@ class FortiGateConfigTree:
     configs: list[ConfigNode] = field(default_factory=list)
     comments: list[CommentNode] = field(default_factory=list)
 
-    # Optional metadata parsed from FortiGate header comments.
-    source_version: str | None = None
-    source_build: str | None = None
+    unknown_commands: list[UnknownCommandNode] = field(
+        default_factory=list
+    )
 
     @property
     def top_level_sections(self) -> list[str]:
         return [node.name for node in self.configs]
 
     def find_configs(self, name: str) -> list[ConfigNode]:
-        """
-        Return all config nodes whose exact structural name matches `name`.
-
-        Recursive traversal is useful for VDOM configurations where the
-        same section can occur below multiple VDOM edit blocks.
+        """Return all config nodes whose exact structural name matches `name`,
+        including nested config blocks.
         """
 
         result: list[ConfigNode] = []

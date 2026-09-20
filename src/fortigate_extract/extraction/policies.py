@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from model.config import FGConfig
-from model.policy import FGPolicy
-from nodes import FortiGateConfigTree
+from typing import Protocol
+
+from ..model.policy import FGPolicy
+from ..nodes import FortiGateConfigTree
 
 from .common import (
     evaluate_edit,
@@ -11,28 +12,28 @@ from .common import (
 )
 
 
-POLICY_LIST_ALIASES = {
-    # Usually these can remain identical, but keeping this here makes
-    # source→model naming differences explicit if needed later.
-}
+class PolicyConfig(Protocol):
+    """Minimal destination required by firewall-policy extraction."""
+
+    policies: list[FGPolicy]
 
 
 def extract_policies(
     tree: FortiGateConfigTree,
-    config: FGConfig,
+    config: PolicyConfig,
 ) -> None:
     """
-    Extract `config firewall policy` objects.
+    Extract FortiGate firewall-policy source objects.
 
-    This function only constructs FortiGate source models.
-
-    It does not:
-        - derive NAT rules
+    This layer does not:
+        - resolve interfaces
         - resolve addresses/services
+        - resolve VIPs
+        - resolve IP pools
         - apply FortiOS defaults
-        - infer NGFW behavior
-        - infer central NAT behavior
-        - validate cross-object references
+        - derive NAT rules
+        - derive policy semantics
+        - validate references
     """
 
     section_path = "firewall policy"
@@ -48,23 +49,25 @@ def extract_policies(
 
         attributes = source_model_kwargs(
             evaluation,
+            model_type=FGPolicy,
             vdom=source.vdom,
         )
 
-        # FortiGate firewall-policy edit keys are policy IDs.
+        # FortiGate source identity:
+        #
+        # config firewall policy
+        #     edit <policyid>
+        #
+        # The policy ID is structural source data, not a set command.
         try:
             attributes["policy_id"] = int(
                 source.edit.name
             )
         except ValueError:
-            attributes["raw_extra"]["unparsed_policy_id"] = (
-                source.edit.name
-            )
-
-            # Skip model construction only if policy_id is mandatory.
-            # Alternatively make policy_id optional in FGPolicy if you
-            # explicitly want malformed objects preserved as typed models.
-            continue
+            attributes["policy_id"] = None
+            attributes["raw_extra"][
+                "unparsed_policy_id"
+            ] = source.edit.name
 
         config.policies.append(
             FGPolicy(**attributes)

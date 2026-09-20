@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .nodes import CommandNode, UnknownCommandNode
-from .section_registry import SectionSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,43 +14,25 @@ class CommandEvaluation:
     """
     Result of evaluating commands from one FortiGate source object.
 
-    `attributes`
-        Typed/declared source fields that can be passed to a FortiGate model.
+    `values`
+        Typed source values produced from declared primitive field types.
 
     `explicit_fields`
-        Fields explicitly configured by set/append and still effective after
-        all commands have been evaluated.
+        Declared fields explicitly configured by set/append and still
+        represented in the evaluated source state.
 
     `unset_fields`
-        Fields explicitly unset in the final source command sequence.
+        Fields explicitly unset in the final evaluated source state.
 
-    `secret_fields_present`
-        Secret fields that were configured. Secret values are never retained.
-
-    `extra_settings`
-        Explicit source fields not represented by the declared section schema,
-        plus malformed values that could not be converted.
+    `untyped_values`
+        Source fields without a declared primitive type, malformed values
+        that could not be converted, and unsupported source operations.
     """
 
-    attributes: dict[str, Any] = field(default_factory=dict)
+    values: dict[str, Any] = field(default_factory=dict)
     explicit_fields: set[str] = field(default_factory=set)
     unset_fields: set[str] = field(default_factory=set)
-    secret_fields_present: set[str] = field(default_factory=set)
-    extra_settings: dict[str, Any] = field(default_factory=dict)
-
-
-def normalize_key(key: str) -> str:
-    """Convert FortiOS field spelling to Python model spelling."""
-
-    normalized = key.replace("-", "_")
-
-    if normalized == "threshold(default)":
-        return "threshold_default"
-
-    if normalized == "tacacs+_server":
-        return "tacacs_server"
-
-    return normalized
+    untyped_values: dict[str, Any] = field(default_factory=dict)
 
 
 def _raw_value(
@@ -66,8 +48,7 @@ def _raw_value(
         ["enable"]      -> "enable"
         ["a", "b"]      -> ["a", "b"]
 
-    A declared scalar field joins multiple tokens because some FortiOS scalar
-    values are represented by multiple lexical values.
+    A declared scalar field joins multiple lexical values into one string.
     """
 
     if not values:
@@ -92,52 +73,83 @@ def _append_values(
         return list(values)
 
     if isinstance(current, list):
-        return [*current, *values]
+        return [
+            *current,
+            *values,
+        ]
 
-    return [current, *values]
+    return [
+        current,
+        *values,
+    ]
 
 
-def _record_extra(
-    extras: dict[str, Any],
+def _record_untyped(
+    untyped_values: dict[str, Any],
     key: str,
     value: Any,
 ) -> None:
     """
-    Preserve repeated unsupported values without destroying earlier evidence.
+    Preserve repeated unsupported source evidence without overwriting
+    earlier evidence.
     """
 
-    if key not in extras:
-        extras[key] = value
+    if key not in untyped_values:
+        untyped_values[key] = value
         return
 
-    current = extras[key]
+    current = untyped_values[key]
 
     if not isinstance(current, list):
         current = [current]
 
     if isinstance(value, list):
-        extras[key] = [*current, *value]
+        untyped_values[key] = [
+            *current,
+            *value,
+        ]
     else:
-        extras[key] = [*current, value]
+        untyped_values[key] = [
+            *current,
+            value,
+        ]
+
+
+def _mark_explicit(
+    key: str,
+    *,
+    explicit_fields: set[str],
+    unset_fields: set[str],
+) -> None:
+    """Mark a declared source field as explicitly effective."""
+
+    explicit_fields.add(key)
+    unset_fields.discard(key)
 
 
 def evaluate_commands(
-    commands: Iterable[CommandNode | UnknownCommandNode],
+    commands: Iterable[
+        CommandNode | UnknownCommandNode
+    ],
     *,
     list_fields: Iterable[str] = (),
     integer_fields: Iterable[str] = (),
     integer_list_fields: Iterable[str] = (),
     scalar_fields: Iterable[str] = (),
-    secret_fields: Iterable[str] = (),
     initial: Mapping[str, Any] | None = None,
 ) -> CommandEvaluation:
     """
-    Apply FortiGate set/append/unset operations in source order.
+    Apply set/append/unset operations in source order.
 
-    This function performs only source-state evaluation and simple declared
-    type conversion.
+    Field names remain in original FortiGate CLI spelling.
+
+    This function performs only:
+        - source-order state evaluation
+        - caller-declared primitive type conversion
 
     It does not:
+        - normalize source keys
+        - classify secrets
         - apply FortiOS defaults
         - resolve references
         - normalize vendor semantics
@@ -145,14 +157,12 @@ def evaluate_commands(
         - construct FortiGate models
     """
 
-    list_fields = {normalize_key(key) for key in list_fields}
-    integer_fields = {normalize_key(key) for key in integer_fields}
-    integer_list_fields = {
-        normalize_key(key)
-        for key in integer_list_fields
-    }
-    scalar_fields = {normalize_key(key) for key in scalar_fields}
-    secret_fields = {normalize_key(key) for key in secret_fields}
+    list_fields = set(list_fields)
+    integer_fields = set(integer_fields)
+    integer_list_fields = set(
+        integer_list_fields
+    )
+    scalar_fields = set(scalar_fields)
 
     declared_fields = (
         list_fields
@@ -161,234 +171,316 @@ def evaluate_commands(
         | scalar_fields
     )
 
-    attributes: dict[str, Any] = dict(initial or {})
-    extras: dict[str, Any] = {}
+    initial_values = dict(
+        initial or {}
+    )
+
+    evaluated_values: dict[str, Any] = dict(
+        initial_values
+    )
+
+    untyped_values: dict[str, Any] = {}
 
     explicit_fields: set[str] = set()
     unset_fields: set[str] = set()
-    secret_fields_present: set[str] = set()
 
     for command in commands:
-        if isinstance(command, UnknownCommandNode):
-            _record_extra(
-                extras,
-                f"unknown_command:{command.keyword}",
+        # ----------------------------------------------------------
+        # Unknown syntax
+        # ----------------------------------------------------------
+
+        if isinstance(
+            command,
+            UnknownCommandNode,
+        ):
+            _record_untyped(
+                untyped_values,
+                (
+                    "unknown_command:"
+                    f"{command.keyword}"
+                ),
                 list(command.values),
             )
             continue
 
-        key = normalize_key(command.key)
+        key = command.key
         operation = command.operation.lower()
-        values = list(command.values)
+        command_values = list(
+            command.values
+        )
 
-        # --------------------------------------------------------------
-        # Secret handling
-        # --------------------------------------------------------------
-
-        if key in secret_fields:
-            attributes.pop(key, None)
-            extras.pop(key, None)
-
-            if operation == "unset":
-                secret_fields_present.discard(key)
-                explicit_fields.discard(key)
-                unset_fields.add(key)
-
-            elif operation in {"set", "append"}:
-                secret_fields_present.add(key)
-                explicit_fields.add(key)
-                unset_fields.discard(key)
-
-            else:
-                _record_extra(
-                    extras,
-                    f"unsupported_operation:{operation}:{key}",
-                    True,
-                )
-
-            continue
-
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # unset
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         if operation == "unset":
-            attributes.pop(key, None)
-            extras.pop(key, None)
-            extras.pop(f"unparsed_{key}", None)
+            evaluated_values.pop(
+                key,
+                None,
+            )
+
+            untyped_values.pop(
+                key,
+                None,
+            )
+
+            untyped_values.pop(
+                f"unparsed_{key}",
+                None,
+            )
 
             explicit_fields.discard(key)
             unset_fields.add(key)
 
             continue
 
-        # --------------------------------------------------------------
-        # Only set / append are evaluated
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
+        # Only set / append have source-state semantics here
+        # ----------------------------------------------------------
 
-        if operation not in {"set", "append"}:
-            _record_extra(
-                extras,
-                f"unsupported_operation:{operation}:{key}",
-                values if values else True,
+        if operation not in {
+            "set",
+            "append",
+        }:
+            _record_untyped(
+                untyped_values,
+                (
+                    "unsupported_operation:"
+                    f"{operation}:{key}"
+                ),
+                (
+                    command_values
+                    if command_values
+                    else True
+                ),
             )
             continue
 
-        explicit_fields.add(key)
-        unset_fields.discard(key)
-
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Integer list
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         if key in integer_list_fields:
             parsed: list[int] = []
             malformed: list[str] = []
 
-            for value in values:
+            for value in command_values:
                 try:
-                    parsed.append(int(value))
-                except (TypeError, ValueError):
-                    malformed.append(str(value))
+                    parsed.append(
+                        int(value)
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    malformed.append(
+                        str(value)
+                    )
 
             if operation == "set":
-                attributes[key] = parsed
+                evaluated_values[key] = (
+                    parsed
+                )
             else:
-                attributes[key] = _append_values(
-                    attributes.get(key),
-                    parsed,
+                evaluated_values[key] = (
+                    _append_values(
+                        evaluated_values.get(
+                            key
+                        ),
+                        parsed,
+                    )
                 )
 
+            _mark_explicit(
+                key,
+                explicit_fields=explicit_fields,
+                unset_fields=unset_fields,
+            )
+
             if malformed:
-                _record_extra(
-                    extras,
+                _record_untyped(
+                    untyped_values,
                     f"unparsed_{key}",
                     malformed,
                 )
 
             continue
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Integer scalar
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         if key in integer_fields:
             if operation == "append":
-                _record_extra(
-                    extras,
+                _record_untyped(
+                    untyped_values,
                     f"unsupported_append_{key}",
-                    values if values else True,
+                    (
+                        command_values
+                        if command_values
+                        else True
+                    ),
                 )
                 continue
 
-            if len(values) != 1:
-                _record_extra(
-                    extras,
-                    f"unparsed_{key}",
-                    _raw_value(values),
+            if len(command_values) != 1:
+                evaluated_values.pop(
+                    key,
+                    None,
                 )
-                attributes.pop(key, None)
+
+                explicit_fields.discard(
+                    key
+                )
+                unset_fields.discard(
+                    key
+                )
+
+                _record_untyped(
+                    untyped_values,
+                    f"unparsed_{key}",
+                    _raw_value(
+                        command_values
+                    ),
+                )
+
                 continue
 
             try:
-                attributes[key] = int(values[0])
-            except (TypeError, ValueError):
-                attributes.pop(key, None)
-
-                _record_extra(
-                    extras,
-                    f"unparsed_{key}",
-                    values[0],
+                evaluated_values[key] = int(
+                    command_values[0]
                 )
+            except (
+                TypeError,
+                ValueError,
+            ):
+                evaluated_values.pop(
+                    key,
+                    None,
+                )
+
+                explicit_fields.discard(
+                    key
+                )
+                unset_fields.discard(
+                    key
+                )
+
+                _record_untyped(
+                    untyped_values,
+                    f"unparsed_{key}",
+                    command_values[0],
+                )
+
+                continue
+
+            _mark_explicit(
+                key,
+                explicit_fields=explicit_fields,
+                unset_fields=unset_fields,
+            )
 
             continue
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # List
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         if key in list_fields:
             if operation == "set":
-                attributes[key] = list(values)
-            else:
-                attributes[key] = _append_values(
-                    attributes.get(key),
-                    values,
-                )
-
-            continue
-
-        # --------------------------------------------------------------
-        # Scalar
-        # --------------------------------------------------------------
-
-        if key in scalar_fields:
-            if operation == "set":
-                attributes[key] = _raw_value(
-                    values,
-                    scalar=True,
+                evaluated_values[key] = list(
+                    command_values
                 )
             else:
-                # Appending to a scalar has ambiguous semantics.
-                _record_extra(
-                    extras,
-                    f"unsupported_append_{key}",
-                    values if values else True,
+                evaluated_values[key] = (
+                    _append_values(
+                        evaluated_values.get(
+                            key
+                        ),
+                        command_values,
+                    )
                 )
 
-            continue
-
-        # --------------------------------------------------------------
-        # Unknown field
-        # --------------------------------------------------------------
-
-        value = _raw_value(values)
-
-        if operation == "set":
-            extras[key] = value
-
-        else:
-            extras[key] = _append_values(
-                extras.get(key),
-                values,
+            _mark_explicit(
+                key,
+                explicit_fields=explicit_fields,
+                unset_fields=unset_fields,
             )
 
-    # Only declared fields belong in attributes.
-    attributes = {
+            continue
+
+        # ----------------------------------------------------------
+        # Scalar
+        # ----------------------------------------------------------
+
+        if key in scalar_fields:
+            if operation == "append":
+                _record_untyped(
+                    untyped_values,
+                    f"unsupported_append_{key}",
+                    (
+                        command_values
+                        if command_values
+                        else True
+                    ),
+                )
+                continue
+
+            evaluated_values[key] = (
+                _raw_value(
+                    command_values,
+                    scalar=True,
+                )
+            )
+
+            _mark_explicit(
+                key,
+                explicit_fields=explicit_fields,
+                unset_fields=unset_fields,
+            )
+
+            continue
+
+        # ----------------------------------------------------------
+        # Untyped / undeclared source field
+        # ----------------------------------------------------------
+
+        value = _raw_value(
+            command_values
+        )
+
+        if operation == "set":
+            untyped_values[key] = value
+        else:
+            untyped_values[key] = (
+                _append_values(
+                    untyped_values.get(key),
+                    command_values,
+                )
+            )
+
+        # This field is source-explicit, but it is not added to
+        # `explicit_fields` because no declared typed model state
+        # was produced for it.
+        unset_fields.discard(key)
+
+    # --------------------------------------------------------------
+    # Defensive typed-result boundary
+    # --------------------------------------------------------------
+
+    evaluated_values = {
         key: value
-        for key, value in attributes.items()
-        if key in declared_fields or key in (initial or {})
+        for key, value
+        in evaluated_values.items()
+        if (
+            key in declared_fields
+            or key in initial_values
+        )
     }
 
     return CommandEvaluation(
-        attributes=attributes,
+        values=evaluated_values,
         explicit_fields=explicit_fields,
         unset_fields=unset_fields,
-        secret_fields_present=secret_fields_present,
-        extra_settings=extras,
-    )
-
-
-def evaluate_section_commands(
-    commands: Iterable[CommandNode | UnknownCommandNode],
-    spec: SectionSpec | None,
-    *,
-    initial: Mapping[str, Any] | None = None,
-) -> CommandEvaluation:
-    """Evaluate commands using a section registry specification."""
-
-    if spec is None:
-        return evaluate_commands(
-            commands,
-            initial=initial,
-        )
-
-    return evaluate_commands(
-        commands,
-        list_fields=spec.list_fields,
-        integer_fields=spec.integer_fields,
-        integer_list_fields=spec.integer_list_fields,
-        scalar_fields=spec.scalar_fields,
-        secret_fields=spec.secret_fields,
-        initial=initial,
+        untyped_values=untyped_values,
     )

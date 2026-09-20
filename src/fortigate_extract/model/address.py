@@ -5,13 +5,18 @@ from pydantic import BaseModel, Field
 # config firewall address
 class FGAddressTaggingEntry(BaseModel):
     name: str
-    category: Optional[str] = None
+    category: str | None = None
     tags: list[str] = Field(default_factory=list)
+
+    raw_extra: dict[str, Any] = Field(default_factory=dict)
+    explicit_fields: set[str] = Field(default_factory=set)
 
 
 class FGAddress(BaseModel):
     name: str
     vdom: str = "root"
+
+    address_family: Literal["ipv4", "ipv6"] = "ipv4"
 
     # Source type
     type: Optional[str] = None
@@ -36,12 +41,24 @@ class FGAddress(BaseModel):
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
 
+class FGWildcardFQDN(BaseModel):
+    name: str
+    vdom: str = "root"
+
+    wildcard_fqdn: str
+    comment: str | None = None
+
+    raw_extra: dict[str, Any] = Field(default_factory=dict)
+    explicit_fields: set[str] = Field(default_factory=set)
 
 # config firewall addrgrp
 class FGAddressGroupTaggingEntry(BaseModel):
     name: str
     category: str | None = None
     tags: list[str] = Field(default_factory=list)
+
+    raw_extra: dict[str, Any] = Field(default_factory=dict)
+    explicit_fields: set[str] = Field(default_factory=set)
 
 
 class FGAddressGroup(BaseModel):
