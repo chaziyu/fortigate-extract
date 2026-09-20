@@ -115,6 +115,12 @@ _DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
             "Management Profile",
         }
     ),
+    "Policies": frozenset(
+        {
+            "Antispyware Profiles",
+            "Wildfire Analysis Profiles",
+        }
+    ),
     "IP Pools": frozenset(
         {
             "Check Point Pool Object Type",
