@@ -14,9 +14,24 @@ from .policy import FGPolicy
 from .route_static import FGStaticRoute
 from .sdwan import FGSDWAN
 from .security_profile import FGProfileGroup
-from .service import FGService, FGServiceGroup
+from .service import FGService, FGServiceGroup, FGServiceCategory
 from .vip import FGVIP, FGVIPGroup
 from .vpn import FGIPsecPhase1, FGIPsecPhase2
+from .admin import (
+    FGAdministrator,
+    FGAdminProfile,
+)
+from .dhcp import FGDHCPServer
+from .user import (
+    FGLocalUser,
+    FGUserGroup,
+)
+from .vpn_ssl import (
+    FGSSLVPNHostCheckSoftware,
+    FGSSLVPNPortal,
+    FGSSLVPNSettings,
+)
+from .zone import FGZone
 
 
 class FGConfig(BaseModel):
@@ -61,3 +76,12 @@ class FGConfig(BaseModel):
 
     local_users: list[FGLocalUser] = Field(default_factory=list)
     user_groups: list[FGUserGroup] = Field(default_factory=list)
+
+    administrators: list[FGAdministrator] = Field(default_factory=list)
+    admin_profiles: list[FGAdminProfile] = Field(default_factory=list)
+
+    service_categories: list[FGServiceCategory] = Field(default_factory=list)
+
+    administrators: list[FGAdministrator] = Field(default_factory=list)
+
+    admin_profiles: list[FGAdminProfile] = Field(default_factory=list)

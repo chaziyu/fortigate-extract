@@ -18,35 +18,42 @@ from ..nodes import (
 from ..section_registry import get_section_spec
 
 
-_SOURCE_KEY_OVERRIDES = {
-    "tacacs+-server": "tacacs_server",
-    "threshold(default)": "threshold_default",
-}
-
-
 @dataclass(frozen=True, slots=True)
 class SectionEdit:
-    """
-    One edit block with its FortiGate source context.
-    """
+    """One edit block with its FortiGate source context."""
 
     section_path: str
     edit: EditNode
     vdom: str = "root"
 
 
-def normalize_source_key(key: str) -> str:
+@dataclass(frozen=True, slots=True)
+class SectionConfig:
+    """One config block with its FortiGate source context."""
+
+    section_path: str
+    config: ConfigNode
+    vdom: str = "root"
+
+
+def normalize_source_key(
+    key: str,
+) -> str:
     """
-    Convert a raw FortiGate CLI field name to a Python field name.
+    Convert raw FortiGate CLI spelling to ordinary Python field spelling.
 
-    Normalization belongs at the extraction boundary.
+    This normalization is intentionally generic.
 
-    The tokenizer, parser, structural nodes, section registry, and command
-    evaluator retain the original FortiGate CLI spelling.
+    Domain-specific mappings belong in the calling extractor through
+    `field_map`.
+
+    Examples:
+        associated-interface -> associated_interface
+        exclude-member       -> exclude_member
+
+    The tokenizer, parser, nodes, section registry, and command evaluator
+    retain the original FortiGate CLI spelling.
     """
-
-    if key in _SOURCE_KEY_OVERRIDES:
-        return _SOURCE_KEY_OVERRIDES[key]
 
     return key.replace("-", "_")
 
@@ -56,17 +63,23 @@ def _model_field_name(
     field_map: Mapping[str, str],
 ) -> str:
     """
-    Resolve one raw FortiGate source key to its target model field.
+    Resolve one raw FortiGate source key to its source-model field.
 
-    `field_map` may reference either the raw CLI spelling or the normalized
-    source spelling.
+    `field_map` may use either raw FortiGate CLI spelling or the normally
+    normalized Python spelling.
 
     Examples:
-        member          -> members
-        exclude-member  -> exclude_members
+
+        field_map={
+            "member": "members",
+            "exclude-member": "exclude_members",
+            "tacacs+-server": "tacacs_server",
+        }
     """
 
-    normalized = normalize_source_key(source_key)
+    normalized = normalize_source_key(
+        source_key
+    )
 
     if source_key in field_map:
         return field_map[source_key]
@@ -83,9 +96,10 @@ def _record_raw_extra(
     value: Any,
 ) -> None:
     """
-    Preserve source data without overwriting earlier evidence.
+    Preserve source evidence without overwriting an earlier value.
 
-    Keys remain in original FortiGate CLI spelling whenever possible.
+    Raw-extra keys retain original FortiGate CLI spelling whenever
+    possible.
     """
 
     if key not in raw_extra:
@@ -109,14 +123,42 @@ def _record_raw_extra(
         ]
 
 
+def _evaluate_section_commands(
+    section_path: str,
+    commands,
+) -> CommandEvaluation:
+    """
+    Evaluate commands using primitive field metadata from the section
+    registry.
+
+    The registry supplies only primitive source shapes. No FortiGate
+    semantic interpretation occurs here.
+    """
+
+    spec = get_section_spec(
+        section_path
+    )
+
+    if spec is None:
+        return evaluate_commands(
+            commands
+        )
+
+    return evaluate_commands(
+        commands,
+        list_fields=spec.list_fields,
+        integer_fields=spec.integer_fields,
+        integer_list_fields=spec.integer_list_fields,
+        scalar_fields=spec.scalar_fields,
+    )
+
+
 def evaluate_edit(
     section_path: str,
     edit: EditNode,
 ) -> CommandEvaluation:
     """
-    Evaluate explicit commands from one edit block.
-
-    The section registry provides only primitive source-field shapes.
+    Evaluate explicit commands attached to one `edit ... next` block.
 
     This function does not:
         - normalize source keys
@@ -127,19 +169,37 @@ def evaluate_edit(
         - perform validation
     """
 
-    spec = get_section_spec(section_path)
-
-    if spec is None:
-        return evaluate_commands(
-            edit.commands,
-        )
-
-    return evaluate_commands(
+    return _evaluate_section_commands(
+        section_path,
         edit.commands,
-        list_fields=spec.list_fields,
-        integer_fields=spec.integer_fields,
-        integer_list_fields=spec.integer_list_fields,
-        scalar_fields=spec.scalar_fields,
+    )
+
+
+def evaluate_config(
+    section_path: str,
+    config: ConfigNode,
+) -> CommandEvaluation:
+    """
+    Evaluate explicit commands attached directly to one config block.
+
+    This is required for FortiGate sections such as:
+
+        config system sdwan
+            set status enable
+            ...
+        end
+
+    and:
+
+        config vpn ssl settings
+            set status enable
+            ...
+        end
+    """
+
+    return _evaluate_section_commands(
+        section_path,
+        config.commands,
     )
 
 
@@ -152,29 +212,28 @@ def source_model_kwargs(
     field_map: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """
-    Convert evaluated source state into kwargs for one source model.
+    Convert evaluated FortiGate source state into source-model kwargs.
 
-    Processing order:
+    Processing flow:
 
-        raw evaluated source field
-        -> extraction-side key normalization
-        -> optional domain field mapping
-        -> model field, if supported
-        -> raw_extra, if deliberately omitted from the small model
+        raw FortiGate source key
+            ↓
+        generic Python-name normalization
+            ↓
+        optional extractor-specific field mapping
+            ↓
+        source-model field
+            OR
+        raw_extra
 
-    Unsupported/untyped source data already present in
-    `evaluation.untyped_values` is also retained in `raw_extra`.
+    Declared registry fields deliberately omitted from the small source
+    model are retained in `raw_extra` instead of being silently dropped.
 
-    `field_map` handles domain-specific source-to-model naming.
+    Untyped, malformed, or unsupported source evidence from the command
+    evaluator is also retained in `raw_extra`.
 
-    Example:
-
-        field_map={
-            "member": "members",
-            "exclude_member": "exclude_members",
-        }
-
-    Raw-extra keys retain FortiGate CLI spelling.
+    Structural metadata such as `name` and `vdom` is not included in
+    `explicit_fields`.
     """
 
     field_map = dict(
@@ -197,7 +256,10 @@ def source_model_kwargs(
     # Evaluated declared source fields
     # --------------------------------------------------------------
 
-    for source_key, value in evaluation.values.items():
+    for (
+        source_key,
+        value,
+    ) in evaluation.values.items():
         target_key = _model_field_name(
             source_key,
             field_map,
@@ -207,10 +269,11 @@ def source_model_kwargs(
             values[target_key] = value
             continue
 
-        # The registry knows this field and the evaluator typed it,
-        # but the deliberately small source model does not retain it.
+        # The registry understands this source field, but the small
+        # source model deliberately does not expose it.
         #
-        # Preserve it rather than allowing Pydantic to silently drop it.
+        # Preserve the original source key/value rather than allowing
+        # Pydantic to silently discard it.
         _record_raw_extra(
             raw_extra,
             source_key,
@@ -218,7 +281,7 @@ def source_model_kwargs(
         )
 
     # --------------------------------------------------------------
-    # Explicit source-field tracking
+    # Explicit-field tracking
     # --------------------------------------------------------------
 
     for source_key in evaluation.explicit_fields:
@@ -233,7 +296,7 @@ def source_model_kwargs(
             )
 
     # --------------------------------------------------------------
-    # Source object identity/context
+    # Structural source identity/context
     # --------------------------------------------------------------
 
     if name is not None:
@@ -267,24 +330,41 @@ def source_model_kwargs(
             )
 
         values["raw_extra"] = raw_extra
+
     elif "raw_extra" in model_fields:
         values["raw_extra"] = {}
 
     if "explicit_fields" in model_fields:
-        values["explicit_fields"] = explicit_fields
+        values["explicit_fields"] = (
+            explicit_fields
+        )
 
     return values
 
 
 def get_child_config(
-    edit: EditNode,
+    parent: EditNode | ConfigNode,
     name: str,
 ) -> ConfigNode | None:
     """
-    Return the first direct child config with the requested structural name.
+    Return the first direct child config matching the requested
+    structural name.
+
+    Nested names are literal structural names.
+
+    Example:
+
+        config system sdwan
+            config members
+                ...
+            end
+        end
+
+    The nested ConfigNode name is `members`, not
+    `system sdwan members`.
     """
 
-    for child in edit.children:
+    for child in parent.children:
         if child.name == name:
             return child
 
@@ -296,33 +376,87 @@ def iter_section_edits(
     section_path: str,
 ) -> Iterator[SectionEdit]:
     """
-    Yield edit blocks belonging to the requested FortiGate section.
+    Yield edit blocks belonging to an exact structural config section.
 
-    VDOM context is derived from the structural tree rather than mutable
-    parser state.
+    VDOM context is derived structurally from `config vdom`.
+
+    `section_path` must correspond to an actual ConfigNode name.
+
+    Semantic registry paths for nested configs, such as:
+
+        system sdwan members
+
+    are not structural ConfigNode names. Nested configs should be reached
+    from their parent with `get_child_config()`.
+    """
+
+    for node, vdom in _iter_configs_with_context(
+        tree
+    ):
+        if node.name != section_path:
+            continue
+
+        for edit in node.edits:
+            yield SectionEdit(
+                section_path=section_path,
+                edit=edit,
+                vdom=vdom,
+            )
+
+
+def iter_section_configs(
+    tree: FortiGateConfigTree,
+    section_path: str,
+) -> Iterator[SectionConfig]:
+    """
+    Yield config blocks matching an exact structural section name.
+
+    Used for FortiGate sections whose source commands are attached
+    directly to the ConfigNode rather than inside an edit block.
+    """
+
+    for node, vdom in _iter_configs_with_context(
+        tree
+    ):
+        if node.name != section_path:
+            continue
+
+        yield SectionConfig(
+            section_path=section_path,
+            config=node,
+            vdom=vdom,
+        )
+
+
+def _iter_configs_with_context(
+    tree: FortiGateConfigTree,
+) -> Iterator[tuple[ConfigNode, str]]:
+    """
+    Traverse every ConfigNode while deriving its FortiGate VDOM context.
+
+    Both edit-based and config-based extraction use this traversal so
+    VDOM handling cannot diverge between extractors.
     """
 
     def walk_config(
         node: ConfigNode,
         *,
         vdom: str,
-    ) -> Iterator[SectionEdit]:
-        if node.name == section_path:
-            for edit in node.edits:
-                yield SectionEdit(
-                    section_path=section_path,
-                    edit=edit,
-                    vdom=vdom,
-                )
+    ) -> Iterator[tuple[ConfigNode, str]]:
+        yield node, vdom
 
         # FortiGate VDOM structure:
         #
         # config vdom
         #     edit <vdom-name>
         #         config ...
+        #             ...
         #         end
         #     next
         # end
+        #
+        # Config blocks beneath each VDOM edit inherit that edit name
+        # as their VDOM context.
         if node.name == "vdom":
             for edit in node.edits:
                 for child in edit.children:
@@ -333,12 +467,15 @@ def iter_section_edits(
 
             return
 
+        # Direct nested configs retain the current VDOM context.
         for child in node.children:
             yield from walk_config(
                 child,
                 vdom=vdom,
             )
 
+        # Configs nested beneath ordinary edit blocks also retain the
+        # current VDOM context.
         for edit in node.edits:
             for child in edit.children:
                 yield from walk_config(
