@@ -203,6 +203,10 @@ _SOURCE_PATHS_BY_SHEET: dict[str, tuple[str, ...]] = {
     "Policy Routes": ("router policy", "router policy6"),
     "Session TTL Settings": ("system session-ttl",),
     "Session TTL Overrides": ("system session-ttl port",),
+    "SD-WAN SLAs": ("system sdwan health-check sla",),
+    "SD-WAN Duplication": ("system sdwan duplication",),
+    "SD-WAN Neighbors": ("system sdwan neighbor",),
+    "SD-WAN Rule SLAs": ("system sdwan service sla",),
     "Routing Protocol Settings": (
         "router bgp",
         "router ospf",
