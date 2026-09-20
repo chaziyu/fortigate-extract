@@ -71,10 +71,3 @@ class FGInterface(BaseModel):
 
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
-
-# if got config secondaryip
-class FGInterfaceSecondaryIP(BaseModel):
-    id: int
-    ip: Optional[str] = None
-    allowaccess: list[str] = Field(default_factory=list)
-    raw_extra: dict[str, Any] = Field(default_factory=dict)

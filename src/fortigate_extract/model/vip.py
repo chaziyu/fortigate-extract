@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class FGVIPRealServer(BaseModel):
     """Real server used by load-balancing/server-load-balance VIPs."""
 
-    id: int
+    id: int | None = None
 
     ip: str | None = None
     address: str | None = None
@@ -18,7 +18,6 @@ class FGVIPRealServer(BaseModel):
 
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
-
 
 class FGVIP(BaseModel):
     name: str

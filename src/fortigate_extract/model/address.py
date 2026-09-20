@@ -1,8 +1,10 @@
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-# config firewall address
+
 class FGAddressTaggingEntry(BaseModel):
     name: str
     category: str | None = None
@@ -18,40 +20,38 @@ class FGAddress(BaseModel):
 
     address_family: Literal["ipv4", "ipv6"] = "ipv4"
 
-    # Source type
-    type: Optional[str] = None
+    type: str | None = None
 
-    # Type-specific source values
-    subnet: Optional[str] = None
-    start_ip: Optional[str] = None
-    end_ip: Optional[str] = None
-    fqdn: Optional[str] = None
-    wildcard: Optional[str] = None
-    wildcard_fqdn: Optional[str] = None
+    subnet: str | None = None
+    start_ip: str | None = None
+    end_ip: str | None = None
+    fqdn: str | None = None
+    wildcard: str | None = None
+    wildcard_fqdn: str | None = None
 
-    # Excel-visible metadata
-    associated_interface: Optional[str] = None
-    allow_routing: Optional[str] = None
-    comment: Optional[str] = None
+    associated_interface: str | None = None
+    allow_routing: str | None = None
+    comment: str | None = None
 
-    # FortiGate tags
-    tagging: list[FGAddressTaggingEntry] = Field(default_factory=list)
+    tagging: list[FGAddressTaggingEntry] = Field(
+        default_factory=list
+    )
 
-    # Preserve unsupported/unused explicit source fields
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
+
 
 class FGWildcardFQDN(BaseModel):
     name: str
     vdom: str = "root"
 
-    wildcard_fqdn: str
+    wildcard_fqdn: str | None = None
     comment: str | None = None
 
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
 
-# config firewall addrgrp
+
 class FGAddressGroupTaggingEntry(BaseModel):
     name: str
     category: str | None = None
@@ -65,24 +65,20 @@ class FGAddressGroup(BaseModel):
     name: str
     vdom: str = "root"
 
-    # Core group contents
     members: list[str] = Field(default_factory=list)
 
-    # Address exclusion
     exclude: str | None = None
     exclude_members: list[str] = Field(default_factory=list)
 
-    # Description
     comment: str | None = None
 
-    # Group semantics that may matter
     type: str | None = None
     category: str | None = None
     allow_routing: str | None = None
 
-    # Optional object tagging
-    tagging: list[FGAddressGroupTaggingEntry] = Field(default_factory=list)
+    tagging: list[FGAddressGroupTaggingEntry] = Field(
+        default_factory=list
+    )
 
-    # Preserve explicit unsupported fields
     raw_extra: dict[str, Any] = Field(default_factory=dict)
     explicit_fields: set[str] = Field(default_factory=set)
