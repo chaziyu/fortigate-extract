@@ -10,22 +10,16 @@ class ExtractionConfig(BaseModel):
     """
     Runtime configuration for FortiGate source extraction.
 
-    This configuration controls input handling and extraction behavior only.
-    Migration semantics, derived views, validation results, and report
-    persistence are handled by their respective layers.
+    This configuration contains input/extraction settings only.
+    Derived semantics, validation, and report persistence belong
+    to their respective layers.
     """
 
-    # Input handling.
     encoding: str = "utf-8"
 
-    # Extraction behavior.
     preserve_unknown_sections: bool = True
     preserve_unknown_fields: bool = True
     include_source_metadata: bool = True
-
-    # Validation behavior.
-    validate_references: bool = True
-    validate_required_fields: bool = True
 
     @classmethod
     def from_yaml(
