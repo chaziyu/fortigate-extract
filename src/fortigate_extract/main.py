@@ -172,11 +172,6 @@ def extract(
         # 7. Write SQLite report
         # --------------------------------------------------------------
 
-        output_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
         click.echo("")
         click.echo(
             f"Writing report: {output_path}"
@@ -199,13 +194,11 @@ def extract(
         UnicodeError,
         ValueError,
     ) as exc:
-        _fail(
-            str(exc)
-        )
+        raise click.ClickException(
+            f"Report generation failed: {exc}"
+        ) from exc
 
     except Exception as exc:
-        # Keep unexpected failures visible while still presenting
-        # a concise CLI error to the user.
         raise click.ClickException(
             f"Report generation failed: {exc}"
         ) from exc
@@ -340,10 +333,6 @@ def _print_summary(
                 f"  {label:<28} {count}"
             )
 
-    # --------------------------------------------------------------
-    # Derived output
-    # --------------------------------------------------------------
-
     click.echo("")
     click.echo("Derived views")
 
@@ -398,50 +387,17 @@ def _print_summary(
                 f"  {label:<28} {count}"
             )
 
-    # --------------------------------------------------------------
-    # Validation
-    # --------------------------------------------------------------
-
-    error_count = len(
-        validation.errors
-    )
-
-    warning_count = len(
-        validation.warnings
-    )
-
     click.echo("")
     click.echo("Validation")
 
     click.echo(
         f"  {'Errors':<28} "
-        f"{error_count}"
+        f"{len(validation.errors)}"
     )
 
     click.echo(
         f"  {'Warnings':<28} "
-        f"{warning_count}"
-    )
-
-    # Duplicate names detected while building reference indexes
-    # are useful to expose separately because they can affect
-    # relationship resolution.
-    duplicate_count = len(
-        derived.references.duplicates
-    )
-
-    if duplicate_count:
-        click.echo(
-            f"  {'Duplicate objects':<28} "
-            f"{duplicate_count}"
-        )
-
-
-def _fail(
-    message: str,
-) -> None:
-    raise click.ClickException(
-        f"Report generation failed: {message}"
+        f"{len(validation.warnings)}"
     )
 
 
