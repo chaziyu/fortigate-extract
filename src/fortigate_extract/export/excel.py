@@ -107,6 +107,51 @@ _EXTRA_SHEETS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
+_DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
+    "Interfaces": frozenset(
+        {
+            "Virtual Router / Routing Instance",
+            "Routing Instance Type",
+            "Management Profile",
+        }
+    ),
+    "IP Pools": frozenset(
+        {
+            "Check Point Pool Object Type",
+            "Check Point Networks",
+            "Check Point Network Groups",
+            "Check Point Address Ranges",
+            "Check Point Gateways",
+            "Check Point Member Assignments",
+            "Check Point Applicability",
+            "Check Point Precedence",
+            "Check Point VPN Scope",
+            "Check Point MEP",
+        }
+    ),
+    "NAT Rules": frozenset(
+        {
+            "Source Rule UID",
+            "Install On",
+            "Static NAT Bi-directional",
+            "Source Translation Fallback",
+        }
+    ),
+    "VPN Tunnels": frozenset(
+        {
+            "IKE Crypto Profile",
+            "IPsec Crypto Profile",
+        }
+    ),
+    "Security Profiles": frozenset(
+        {
+            "Anti-Spyware",
+            "WildFire",
+        }
+    ),
+}
+
+
 _EXTRA_COLUMNS: dict[str, tuple[str, ...]] = {
     "Interfaces": (
         "Relationship",
@@ -382,6 +427,10 @@ def _build_workbook(context: _ExcelContext) -> Workbook:
         headers = [
             "Analysis Status" if header == "Migration Status" else header
             for header in headers
+            if header not in _DROP_COLUMNS_BY_SHEET.get(
+                sheet_name,
+                frozenset(),
+            )
         ]
 
         for extra in _EXTRA_COLUMNS.get(sheet_name, ()):
