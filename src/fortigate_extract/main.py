@@ -14,7 +14,7 @@ from .extraction.extractor import (
 )
 from .model.source import FGConfig
 from .parser import parse_fortigate_config
-from .report import write_report_database
+from .export import export_excel
 from .validation.models import ValidationResult
 from .validation.validator import validate_config
 
@@ -24,7 +24,7 @@ def cli() -> None:
     """
     Extract and analyze FortiGate configuration.
 
-    Results are persisted as a SQLite-backed FortiGate report.
+    Results are exported as a reviewable Excel workbook.
     """
 
 
@@ -50,10 +50,7 @@ def cli() -> None:
         dir_okay=False,
         path_type=Path,
     ),
-    help=(
-        "Output FortiGate report database "
-        "(.fgreport or .db)."
-    ),
+    help="Output FortiGate Excel workbook (.xlsx).",
 )
 @click.option(
     "--config",
@@ -169,24 +166,25 @@ def extract(
         )
 
         # --------------------------------------------------------------
-        # 7. Write SQLite report
+        # 7. Write Excel report
         # --------------------------------------------------------------
 
         click.echo("")
         click.echo(
-            f"Writing report: {output_path}"
+            f"Writing Excel report: {output_path}"
         )
 
-        write_report_database(
-            output_path,
-            config=source_config,
+        export_excel(
+            extracted=extracted,
             derived=derived,
             validation=validation,
+            output=output_path,
+            config=extraction_config,
             source_name=input_path.name,
         )
 
         click.echo(
-            "Report generation complete."
+            "Excel report generation complete."
         )
 
     except (
