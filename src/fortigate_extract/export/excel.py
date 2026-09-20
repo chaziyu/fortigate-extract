@@ -175,6 +175,11 @@ _EXTRA_COLUMNS: dict[str, tuple[str, ...]] = {
         "Topology Issues",
         "Source Explicit Fields",
     ),
+    "NAT Rules": (
+        "Egress Interfaces",
+        "Derived Issues",
+        "VDOM",
+    ),
     "VPN Phase 2": (
         "Source Range",
         "Destination Range",
@@ -1453,18 +1458,107 @@ def _vip_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
 
 
 def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+    policies = {
+        (policy.vdom, policy.policy_id): policy
+        for policy in context.config.policies
+    }
+    pools = {
+        (pool.vdom, pool.name): pool
+        for pool in context.config.ip_pools
+    }
+
     rows = []
+
     for item in context.derived.nat:
+        policy = policies.get(
+            (item.vdom, item.policy_id)
+        )
+
+        pool_objects = [
+            pools[(item.vdom, name)]
+            for name in item.pool_names
+            if (item.vdom, name) in pools
+        ]
+
         row = {
-            "Policy ID": item.policy_id,
-            "Policy Name": item.policy_name,
-            "Translation Type": item.translation_type,
-            "Pool Names": list(item.pool_names),
-            "Translated Addresses": list(item.translated_addresses),
+            "Rule #": item.policy_id,
+            "Name": item.policy_name,
+            "Type": "source-nat",
+            "Enabled": (
+                _enabled_text(policy.status)
+                if policy is not None
+                else None
+            ),
+            "Source Interface": (
+                policy.srcintf
+                if policy is not None
+                else []
+            ),
+            "Destination Interface": (
+                policy.dstintf
+                if policy is not None
+                else list(item.egress_interfaces)
+            ),
+            "Original Source": (
+                policy.srcaddr
+                if policy is not None
+                else []
+            ),
+            "Original Destination": (
+                policy.dstaddr
+                if policy is not None
+                else []
+            ),
+            "Services": (
+                policy.service
+                if policy is not None
+                else []
+            ),
+            "Source Translation Mode": item.translation_type,
+            "Translated Source": list(item.translated_addresses),
+            "Description": (
+                policy.comments
+                if policy is not None
+                else None
+            ),
+            "Source Policy ID": item.policy_id,
+            "Source Policy UUID": (
+                sanitize_source_attributes(policy.raw_extra).get("uuid")
+                if policy is not None
+                else None
+            ),
+            "IP Pool": list(item.pool_names),
+            "IP Pool Type": [
+                pool.type
+                for pool in pool_objects
+                if pool.type
+            ],
+            "Pool Excluded IPs": [
+                excluded
+                for pool in pool_objects
+                for excluded in pool.exclude_ip
+            ],
+            "Pool Source Start IP": [
+                pool.source_startip
+                for pool in pool_objects
+                if pool.source_startip
+            ],
+            "Pool Source End IP": [
+                pool.source_endip
+                for pool in pool_objects
+                if pool.source_endip
+            ],
+            "Original Service": (
+                policy.service
+                if policy is not None
+                else []
+            ),
+            "Source Translation Method": item.translation_type,
             "Egress Interfaces": list(item.egress_interfaces),
-            "Issues": list(item.issues),
+            "Derived Issues": list(item.issues),
             "VDOM": item.vdom,
         }
+
         _add_analysis_status(
             row,
             context,
@@ -1472,7 +1566,9 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
             names=(item.policy_name, item.policy_id),
             extra_reasons=item.issues,
         )
+
         rows.append(row)
+
     return rows
 
 
