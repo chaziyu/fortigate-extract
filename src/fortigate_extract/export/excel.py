@@ -299,6 +299,45 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Default Portal": ("default-portal",),
     "Tunnel IP Pools": ("tunnel-ip-pools",),
     "Source Explicit Fields": ("__explicit_fields__",),
+    "IPv6 Address": ("ip6-address", "ipv6.ip6-address"),
+    "IPv6 Source Address": ("ip6-source-address", "ipv6.ip6-source-address"),
+    "IPv6 Management Access": ("ip6-allowaccess", "ipv6.ip6-allowaccess"),
+    "IPv6 Mode": ("ip6-mode", "ipv6.ip6-mode"),
+    "IPv6 Prefix Mode": ("ip6-prefix-mode", "ipv6.ip6-prefix-mode"),
+    "IPv6 Send Advertisement": ("ip6-send-adv", "ipv6.ip6-send-adv"),
+    "IPv6 Managed Flag": ("ip6-manage-flag", "ipv6.ip6-manage-flag"),
+    "IPv6 Other Flag": ("ip6-other-flag", "ipv6.ip6-other-flag"),
+    "IPv6 Autoconf": ("autoconf", "ipv6.autoconf"),
+    "DHCPv6 Prefix Delegation": (
+        "dhcp6-prefix-delegation",
+        "ipv6.dhcp6-prefix-delegation",
+    ),
+    "DHCPv6 Prefix Hint": ("dhcp6-prefix-hint", "ipv6.dhcp6-prefix-hint"),
+    "DHCPv6 Prefix Hint Preferred Lifetime": (
+        "dhcp6-prefix-hint-plt",
+        "ipv6.dhcp6-prefix-hint-plt",
+    ),
+    "DHCPv6 Prefix Hint Valid Lifetime": (
+        "dhcp6-prefix-hint-vlt",
+        "ipv6.dhcp6-prefix-hint-vlt",
+    ),
+    "DHCPv6 Client Options": (
+        "dhcp6-client-options",
+        "ipv6.dhcp6-client-options",
+    ),
+    "MTU": ("mtu",),
+    "Link State": ("status",),
+    "Speed": ("speed",),
+    "Duplex": ("duplex",),
+    "Media Type": ("mediatype", "media-type"),
+    "Bandwidth Monitoring": ("monitor-bandwidth",),
+    "Device Identification": ("device-identification",),
+    "NetFlow Profile": ("netflow-sampler",),
+    "Dedicated To": ("dedicated-to",),
+    "IKE SAML Server": ("ike-saml-server",),
+    "Source IP Check": ("src-check",),
+    "DNS Server Override": ("dns-server-override",),
+    "PPPoE Username": ("username", "pppoe-username"),
 }
 
 
@@ -905,7 +944,52 @@ def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
             vdom=interface.vdom,
             names=(interface.name,),
         )
+        source_values = _interface_source_values(
+            context,
+            vdom=interface.vdom,
+            name=interface.name,
+        )
+
+        if "Additional IPv4 Addresses" in headers:
+            row["Additional IPv4 Addresses"] = [
+                secondary.ip
+                for secondary in interface.secondary_ips
+                if secondary.ip
+            ]
+
+        if "DHCP Client" in headers:
+            row["DHCP Client"] = (
+                "Yes"
+                if (interface.mode or "").lower() == "dhcp"
+                else "No"
+                if interface.mode
+                else None
+            )
+
+        if "PPPoE Mode" in headers:
+            row["PPPoE Mode"] = (
+                "Yes"
+                if (interface.mode or "").lower() == "pppoe"
+                else "No"
+                if interface.mode
+                else None
+            )
+
+        if "PPPoE Password Configured" in headers:
+            row["PPPoE Password Configured"] = _source_secret_configured(
+                context,
+                vdom=interface.vdom,
+                name=interface.name,
+                keys=("password", "passwd"),
+            )
+
+        _overlay_raw(row, source_values, headers)
         _overlay_raw(row, interface.raw_extra, headers)
+        row["Additional Settings"] = _additional_source_settings(
+            source_values,
+            row,
+            headers,
+        )
         rows.append(row)
 
         children: list[tuple[str, str, str]] = []
@@ -2434,6 +2518,116 @@ def _disabled_text(value: Any) -> str | None:
     if enabled == "No":
         return "Yes"
     return None
+
+
+def _interface_source_values(
+    context: _ExcelContext,
+    *,
+    vdom: str,
+    name: str,
+) -> dict[str, Any]:
+    """
+    Return safe explicit source values for one interface, including nested
+    interface configuration.
+
+    Nested values are exposed both by their raw key when unambiguous and by a
+    namespaced key such as ipv6.ip6-address. This is report presentation only;
+    FGInterface remains the typed source model.
+    """
+
+    values: dict[str, Any] = {}
+
+    for record in context.extracted.source_objects:
+        if record.vdom != vdom:
+            continue
+
+        direct = (
+            record.source_path == "system interface"
+            and record.object_name == name
+        )
+
+        nested = (
+            record.source_path.startswith("system interface ")
+            and bool(record.parent_objects)
+            and record.parent_objects[0] == name
+        )
+
+        if not direct and not nested:
+            continue
+
+        suffix = (
+            record.source_path.removeprefix("system interface ").strip()
+            if nested
+            else ""
+        )
+
+        for key, value in record.values.items():
+            if key not in values:
+                values[key] = value
+
+            if suffix:
+                values[f"{suffix}.{key}"] = value
+
+    return sanitize_source_attributes(values)
+
+
+def _source_secret_configured(
+    context: _ExcelContext,
+    *,
+    vdom: str,
+    name: str,
+    keys: Iterable[str],
+) -> str | None:
+    wanted = {
+        _normalize_key(key)
+        for key in keys
+    }
+
+    for record in context.extracted.source_objects:
+        if record.vdom != vdom:
+            continue
+        if (
+            record.source_path != "system interface"
+            or record.object_name != name
+        ):
+            continue
+
+        present = {
+            _normalize_key(key)
+            for key in record.values
+        }
+
+        if present & wanted:
+            return "Yes"
+
+    return None
+
+
+def _additional_source_settings(
+    source_values: Mapping[str, Any],
+    row: Mapping[str, Any],
+    headers: Sequence[str],
+) -> dict[str, Any]:
+    consumed: set[str] = set()
+
+    for header in headers:
+        if row.get(header) in (None, "", [], {}):
+            continue
+
+        _, source_key = _lookup_source_header(
+            header,
+            source_values,
+        )
+
+        if source_key is not None:
+            consumed.add(source_key)
+
+    return {
+        key: value
+        for key, value in source_values.items()
+        if key not in consumed
+        and "." not in key
+    }
 
 
 def _interface_rank(item: Any) -> int:
