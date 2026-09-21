@@ -12,7 +12,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnExtractExcel = document.getElementById("btn-extract-excel");
   const previewStatus = document.getElementById("preview-status");
   const inventorySummary = document.getElementById("inventory-summary");
-  const inventorySummaryCopy = document.getElementById("inventory-summary-copy");
   const errorBanner = document.getElementById("error-message");
   const btnNewWorkspace = document.getElementById("btn-new-workspace");
   const btnToggleTheme = document.getElementById("btn-toggle-theme");
@@ -59,13 +58,6 @@ document.addEventListener("DOMContentLoaded", () => {
     previewStatus.classList.toggle("hidden", !message);
   }
 
-  function setSummaryState(label, state) {
-    const element = document.getElementById("summary-state");
-    if (!element) return;
-    element.textContent = label;
-    element.dataset.state = state;
-  }
-
   function setBusy(busy) {
     if (!btnExtractExcel) return;
     btnExtractExcel.disabled = busy || !sourceReady;
@@ -79,10 +71,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function resetCounts() {
     [
-      "inventory-interface-count",
-      "inventory-policy-count",
-      "inventory-address-count",
-      "inventory-vpn-count",
       "validation-error-count",
       "validation-warning-count",
     ].forEach((id) => setText(id, "—"));
@@ -101,8 +89,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (fileInput) fileInput.value = "";
     selectedFileCard?.classList.add("hidden");
     dropzone?.classList.remove("hidden");
-    setText("summary-file", "No configuration selected");
-    setSummaryState("Awaiting source", "idle");
     setPreviewStatus("");
     hideError();
     resetCounts();
@@ -123,7 +109,6 @@ document.addEventListener("DOMContentLoaded", () => {
     sourceReady = false;
     setBusy(false);
     hideError();
-    setSummaryState("Reading configuration", "loading");
     setPreviewStatus(
       "Reading the FortiGate configuration and preparing the inventory…",
       "loading",
@@ -148,33 +133,21 @@ document.addEventListener("DOMContentLoaded", () => {
       const validation = data.validation || {};
       const severity = validation.severity_counts || {};
 
-      const interfaces = count(objects.interfaces);
       const policies = count(objects.policies);
       const addresses = count(objects.addresses);
       const addressGroups = count(objects.address_groups);
       const services = count(objects.services);
       const serviceGroups = count(objects.service_groups);
-      const vpns = count(objects.ipsec_phase1);
       const objectTotal =
         addresses + addressGroups + services + serviceGroups;
 
-      setText("inventory-interface-count", interfaces);
-      setText("inventory-policy-count", policies);
-      setText("inventory-address-count", addresses);
-      setText("inventory-vpn-count", vpns);
       setText("validation-error-count", count(severity.error));
       setText("validation-warning-count", count(severity.warning));
       setText("stat-total-rules", policies);
       setText("stat-total-objects", objectTotal);
 
-      if (inventorySummaryCopy) {
-        inventorySummaryCopy.textContent =
-          `${interfaces} interfaces, ${policies} policies, ${objectTotal} address/service objects.`;
-      }
-
       inventorySummary?.classList.remove("hidden");
       sourceReady = true;
-      setSummaryState("Ready to export", "ready");
       setPreviewStatus(
         "Configuration parsed successfully. The Excel report is ready to generate.",
         "ready",
@@ -209,9 +182,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     dropzone?.classList.add("hidden");
     selectedFileCard?.classList.remove("hidden");
-    setText("summary-file", file.name);
-    setSummaryState("Reading configuration", "loading");
-
     previewFile(file);
   }
 

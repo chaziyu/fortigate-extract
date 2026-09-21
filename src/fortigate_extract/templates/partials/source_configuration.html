@@ -71,9 +71,6 @@
   <div class="optimizer-panel hidden" id="inventory-summary">
     <div class="optimizer-header">
       <strong>{{ icon('activity') }}Extraction preview</strong>
-      <span id="inventory-summary-copy">
-        Configuration parsed successfully.
-      </span>
     </div>
     <div class="optimizer-stats-grid">
       <div class="opt-stat-box">
@@ -84,17 +81,18 @@
         <div class="opt-stat-value" id="stat-total-objects">0</div>
         <div class="opt-stat-label">Objects</div>
       </div>
+      <div class="opt-stat-box">
+        <div class="opt-stat-value" id="validation-error-count">0</div>
+        <div class="opt-stat-label">Errors</div>
+      </div>
+      <div class="opt-stat-box">
+        <div class="opt-stat-value" id="validation-warning-count">0</div>
+        <div class="opt-stat-label">Warnings</div>
+      </div>
     </div>
   </div>
 
   <div class="action-footer">
-    <div class="export-hint">
-      {{ icon('info') }}
-      <span>
-        The workbook preserves the original report layout where useful, adds
-        current derived information, and redacts secret values.
-      </span>
-    </div>
     <button
       type="button"
       id="btn-extract-excel"

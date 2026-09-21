@@ -56,6 +56,30 @@ class WebUITest(unittest.TestCase):
             "FortiGate source.",
             html,
         )
+        self.assertNotIn(
+            "The workbook preserves the original report layout",
+            html,
+        )
+        self.assertNotIn(
+            "inventory-summary-copy",
+            html,
+        )
+        self.assertNotIn(
+            "AT A GLANCE",
+            html,
+        )
+        self.assertNotIn(
+            "Configuration overview",
+            html,
+        )
+        self.assertIn(
+            'id="validation-error-count"',
+            html,
+        )
+        self.assertIn(
+            'id="validation-warning-count"',
+            html,
+        )
 
     def test_preview_accepts_fortigate_upload(self):
         response = self.client.post(
