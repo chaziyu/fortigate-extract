@@ -52,6 +52,10 @@ class WebUITest(unittest.TestCase):
             "Live migration",
             html,
         )
+        self.assertNotIn(
+            "FortiGate source.",
+            html,
+        )
 
     def test_preview_accepts_fortigate_upload(self):
         response = self.client.post(
