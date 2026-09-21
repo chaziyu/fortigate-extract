@@ -217,6 +217,100 @@ class ExcelReportTest(unittest.TestCase):
                             ),
                         )
 
+    def test_legacy_ir_columns_are_removed(self):
+        workbook = self._workbook()
+
+        system_settings = workbook["System Settings"]
+        system_headers = {
+            system_settings.cell(3, column).value
+            for column in range(
+                1,
+                system_settings.max_column + 1,
+            )
+        }
+
+        legacy_management_headers = {
+            "Management IPv4 Address",
+            "Management Netmask",
+            "Management Default Gateway",
+            "Management Address Type",
+            "Management IPv6 Address",
+            "Management IPv6 Default Gateway",
+            "Management IPv6 Enabled",
+            "Management IPv6 Address Type",
+            "Management IPv6 Gateway Type",
+            "Explicit Management Services",
+            "System Permitted IPs",
+        }
+
+        self.assertTrue(
+            system_headers.isdisjoint(
+                legacy_management_headers
+            )
+        )
+
+        policies = workbook["Policies"]
+        policy_headers = {
+            policies.cell(3, column).value
+            for column in range(
+                1,
+                policies.max_column + 1,
+            )
+        }
+
+        self.assertTrue(
+            {
+                "Source Addresses",
+                "Destination Addresses",
+                "Services",
+                "Action",
+                "Schedule",
+                "UTM Status",
+                "Source Explicit Fields",
+            }.issubset(policy_headers)
+        )
+
+        self.assertTrue(
+            policy_headers.isdisjoint(
+                {
+                    "Source Address (Original)",
+                    "Source Address (Normalized)",
+                    "Destination Address (Original)",
+                    "Destination Address (Normalized)",
+                    "Service (Original)",
+                    "Service (Normalized)",
+                    "Action (Original)",
+                    "Action (Normalized)",
+                    "Schedule (Original)",
+                    "Schedule (Normalized)",
+                    "Effective UTM Status",
+                }
+            )
+        )
+
+        routes = workbook["Routes"]
+        route_headers = {
+            routes.cell(3, column).value
+            for column in range(
+                1,
+                routes.max_column + 1,
+            )
+        }
+
+        self.assertTrue(
+            route_headers.isdisjoint(
+                {
+                    "Source Route ID",
+                    "Destination Prefix (Normalized)",
+                    "Source Destination",
+                    "Destination Object / Group",
+                    "Device",
+                    "Next Hop",
+                    "Administrative Distance",
+                }
+            )
+        )
+
     def test_target_vendor_columns_are_removed(self):
         workbook = self._workbook()
 

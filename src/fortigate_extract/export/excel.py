@@ -38,7 +38,10 @@ _LINK_FONT = Font(color="0563C1", underline="single")
 _THIN = Side(style="thin", color="D9E2DF")
 _BORDER = Border(bottom=_THIN)
 
-_OLD_CROSS_VENDOR_SHEETS = frozenset(
+# The retained workbook schema is a content-compatibility baseline and still
+# contains obsolete sheets from the previous architecture.  Keep those names
+# only as an exclusion boundary; they must never be emitted by this exporter.
+_EXCLUDED_LEGACY_SHEETS = frozenset(
     {
         "Extraction Evidence",
         "Firewall Filters",
@@ -108,6 +111,21 @@ _EXTRA_SHEETS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
+    "System Settings": frozenset(
+        {
+            "Management IPv4 Address",
+            "Management Netmask",
+            "Management Default Gateway",
+            "Management Address Type",
+            "Management IPv6 Address",
+            "Management IPv6 Default Gateway",
+            "Management IPv6 Enabled",
+            "Management IPv6 Address Type",
+            "Management IPv6 Gateway Type",
+            "Explicit Management Services",
+            "System Permitted IPs",
+        }
+    ),
     "Interfaces": frozenset(
         {
             "Virtual Router / Routing Instance",
@@ -119,6 +137,17 @@ _DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
         {
             "Antispyware Profiles",
             "Wildfire Analysis Profiles",
+            "Source Address (Original)",
+            "Source Address (Normalized)",
+            "Destination Address (Original)",
+            "Destination Address (Normalized)",
+            "Service (Original)",
+            "Service (Normalized)",
+            "Action (Original)",
+            "Action (Normalized)",
+            "Schedule (Original)",
+            "Schedule (Normalized)",
+            "Effective UTM Status",
         }
     ),
     "IP Pools": frozenset(
@@ -141,6 +170,18 @@ _DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
             "Install On",
             "Static NAT Bi-directional",
             "Source Translation Fallback",
+            "Source Translation Method",
+        }
+    ),
+    "Routes": frozenset(
+        {
+            "Source Route ID",
+            "Destination Prefix (Normalized)",
+            "Source Destination",
+            "Destination Object / Group",
+            "Device",
+            "Next Hop",
+            "Administrative Distance",
         }
     ),
     "VPN Tunnels": frozenset(
@@ -155,10 +196,28 @@ _DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
             "WildFire",
         }
     ),
+    "Extraction Coverage": frozenset(
+        {
+            "Normalized Objects",
+            "Unresolved Dependencies",
+        }
+    ),
 }
 
 
 _EXTRA_COLUMNS: dict[str, tuple[str, ...]] = {
+    "Policies": (
+        "Source Addresses",
+        "Destination Addresses",
+        "Services",
+        "Action",
+        "Schedule",
+        "UTM Status",
+        "Source Explicit Fields",
+    ),
+    "Routes": (
+        "Source Explicit Fields",
+    ),
     "Interfaces": (
         "Relationship",
         "Topology Kind",
@@ -424,10 +483,10 @@ def export_excel(
     """
     Write the FortiGate Excel report.
 
-    The original workbook remains the compatibility baseline for worksheet
-    names/columns.  Cross-vendor target sheets and the obsolete Extraction
-    Evidence sheet are excluded.  Current source/derived fields are added
-    without turning Excel into a semantic layer.
+    The original workbook remains the content-compatibility baseline for
+    worksheet names/columns.  Obsolete compatibility-only sheets and fields
+    are excluded.  Current FortiGate source and genuine derived fields are
+    added without turning Excel into a semantic layer.
     """
 
     del config  # reserved for future presentation-only export options
@@ -507,7 +566,7 @@ def _build_workbook(context: _ExcelContext) -> Workbook:
     order = [
         name
         for name in SHEET_ORDER
-        if name not in _OLD_CROSS_VENDOR_SHEETS
+        if name not in _EXCLUDED_LEGACY_SHEETS
     ]
 
     extra_names = {name for name, _ in _EXTRA_SHEETS}
@@ -1362,32 +1421,26 @@ def _policy_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
             "Rule #": item.policy_id,
             "Name": item.name,
             "Source Interface": item.srcintf,
-            "Source Address (Normalized)": item.srcaddr,
+            "Source Addresses": item.srcaddr,
             "Destination Interface": item.dstintf,
-            "Destination Address (Normalized)": item.dstaddr,
-            "Service (Normalized)": item.service,
-            "Action (Normalized)": item.action,
-            "Schedule (Normalized)": item.schedule,
+            "Destination Addresses": item.dstaddr,
+            "Services": item.service,
+            "Action": item.action,
+            "Schedule": item.schedule,
             "NAT Enabled": _enabled_text(item.nat),
-            "Effective UTM Status": item.utm_status,
+            "UTM Status": item.utm_status,
             "Disabled": _disabled_text(item.status),
             "Source Policy ID": item.policy_id,
-            "Source Address (Original)": item.srcaddr,
             "Source Address Negate": item.srcaddr_negate,
             "Source IPv6 Address": item.srcaddr6,
             "Source IPv6 Address Negate": item.srcaddr6_negate,
-            "Destination Address (Original)": item.dstaddr,
             "Destination Address Negate": item.dstaddr_negate,
             "Destination IPv6 Address": item.dstaddr6,
             "Destination IPv6 Address Negate": item.dstaddr6_negate,
             "User Groups": item.groups,
             "Users": item.users,
-            "Service (Original)": item.service,
             "Service Negate": item.service_negate,
-            "Action (Original)": item.action,
-            "Schedule (Original)": item.schedule,
             "VPN Tunnel": item.vpntunnel,
-            "UTM Status": item.utm_status,
             "IP Pool Enabled": _enabled_text(item.ippool),
             "NAT Pool": item.poolname,
             "NAT Pool IPv6": item.poolname6,
@@ -1403,6 +1456,7 @@ def _policy_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
             "Source Profile Group": item.profile_group,
             "Log Setting": item.logtraffic,
             "Comments": item.comments,
+            "Source Explicit Fields": sorted(item.explicit_fields),
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
         if name_info is not None:
@@ -1640,18 +1694,11 @@ def _route_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str
         {
             "Name": lambda item: str(item.seq_num) if item.seq_num is not None else None,
             "Route ID": "seq_num",
-            "Source Route ID": "seq_num",
             "Destination": "dst",
-            "Destination Prefix (Normalized)": "dst",
-            "Source Destination": "dst",
             "Destination Address Object": "dstaddr",
-            "Destination Object / Group": "dstaddr",
-            "Device": "device",
             "Interface": "device",
             "Gateway": "gateway",
-            "Next Hop": "gateway",
             "Distance": "distance",
-            "Administrative Distance": "distance",
             "Priority": "priority",
             "Status": "status",
             "Enabled": lambda item: _enabled_text(item.status),
@@ -2436,8 +2483,7 @@ def _interface_nested_rows(context: _ExcelContext, headers: Sequence[str]) -> li
 
 
 def _dependency_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    # The old IR dependency engine is intentionally not restored.  Present the
-    # current FortiGate reference failures in the same audit-friendly columns.
+    # Compatibility view over the current FortiGate relationship model.
     return _unresolved_reference_rows(context, headers)
 
 
@@ -2665,7 +2711,9 @@ def _model_rows(
             elif attribute:
                 row[header] = data.get(attribute)
 
-        # Populate obvious old workbook columns from model field names.
+        # Populate compatibility columns only when the header maps directly to
+        # a current source-model field.  Semantic aliases belong in the explicit
+        # per-sheet mapping above, not in generic Excel heuristics.
         for header in headers:
             if header in row:
                 continue
@@ -2778,9 +2826,6 @@ def _header_candidates(header: str) -> list[str]:
         if word not in {
             "source",
             "configured",
-            "effective",
-            "original",
-            "normalized",
             "setting",
             "settings",
             "explicit",
@@ -2792,7 +2837,7 @@ def _header_candidates(header: str) -> list[str]:
         return []
 
     joined = "-".join(words)
-    return [joined, "_".join(words), words[-1]]
+    return [joined, "_".join(words)]
 
 
 def _header_to_model_key(header: str) -> str:
