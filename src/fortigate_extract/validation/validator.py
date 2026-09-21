@@ -8,7 +8,6 @@ from ..model.source import FGConfig
 from ..relationships.references import (
     BrokenReference,
     DuplicateObject,
-    collect_broken_references,
 )
 
 from .models import (
@@ -65,14 +64,7 @@ def validate_config(
     # Broken references
     # --------------------------------------------------------------
 
-    broken_references = (
-        collect_broken_references(
-            config,
-            index=derived.references,
-        )
-    )
-
-    for broken in broken_references:
+    for broken in derived.broken_references:
         issues.append(
             _broken_reference_issue(
                 broken
@@ -162,6 +154,38 @@ def validate_config(
                     message=message,
                 )
             )
+
+    # --------------------------------------------------------------
+    # Load-balancing VIP backends
+    # --------------------------------------------------------------
+
+    for vip in config.vips:
+        if (vip.type or "").lower() not in {
+            "load-balance",
+            "server-load-balance",
+        }:
+            continue
+
+        usable_backends = sum(
+            bool((backend.ip or "").strip() or (backend.address or "").strip())
+            for backend in vip.realservers
+        )
+        if usable_backends >= 2:
+            continue
+
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.WARNING,
+                domain="vip",
+                vdom=vip.vdom,
+                object_name=vip.name,
+                field="realservers",
+                message=(
+                    "Load-balancing VIP has fewer than two usable "
+                    "configured real-server backends."
+                ),
+            )
+        )
 
     # --------------------------------------------------------------
     # Policy-name transformation

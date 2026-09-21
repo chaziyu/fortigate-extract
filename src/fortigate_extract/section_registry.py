@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable
+from types import MappingProxyType
+from typing import Iterable, Mapping
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +46,10 @@ class SectionSpec:
     )
 
 
-SECTION_REGISTRY: dict[str, SectionSpec] = {}
+_SECTION_REGISTRY: dict[str, SectionSpec] = {}
+SECTION_REGISTRY: Mapping[str, SectionSpec] = MappingProxyType(
+    _SECTION_REGISTRY
+)
 
 
 def _fields(*names: str) -> frozenset[str]:
@@ -55,7 +59,7 @@ def _fields(*names: str) -> frozenset[str]:
 def register_section(spec: SectionSpec) -> None:
     """Register one immutable section specification."""
 
-    if spec.source_path in SECTION_REGISTRY:
+    if spec.source_path in _SECTION_REGISTRY:
         raise ValueError(
             f"Section already registered: {spec.source_path!r}"
         )
@@ -83,7 +87,7 @@ def register_section(spec: SectionSpec) -> None:
                     f"{left_name} and {right_name}"
                 )
 
-    SECTION_REGISTRY[spec.source_path] = spec
+    _SECTION_REGISTRY[spec.source_path] = spec
 
 
 def get_section_spec(

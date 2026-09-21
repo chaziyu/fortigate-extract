@@ -28,6 +28,8 @@ class NormalizedService:
 
     source_name: str | None = None
 
+    generated: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class NormalizedServiceGroup:
@@ -107,6 +109,7 @@ def transform_services(
                     name=service.name,
                     vdom=service.vdom,
                     protocol=item.protocol,
+                    generated=False,
                     port=item.port,
                     source_port=item.source_port,
                     protocol_number=(
@@ -147,6 +150,7 @@ def transform_services(
                     name=child_name,
                     vdom=service.vdom,
                     protocol=item.protocol,
+                    generated=True,
                     port=item.port,
                     source_port=item.source_port,
                     protocol_number=(

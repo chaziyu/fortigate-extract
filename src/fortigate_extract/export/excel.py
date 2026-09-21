@@ -15,23 +15,27 @@ from ..config import ExtractionConfig
 from ..derived import DerivedViews, build_derived_views
 from ..extraction.result import ExtractionResult
 from ..extraction.source_inventory import SourceObjectRecord
-from ..relationships.references import collect_broken_references
 from ..security.extraction import sanitize_source_attributes
 from ..section_registry import registered_sections
 from ..validation.models import ValidationIssue, ValidationResult
-from .excel_schema import SHEET_HEADERS, SHEET_ORDER
+from .excel_schema import (
+    DERIVED_COLUMNS_BY_SHEET,
+    HIDDEN_COLUMNS_BY_DEFAULT,
+    SHEET_HEADERS,
+    SHEET_ORDER,
+)
 
 
-_TITLE_FILL = PatternFill("solid", fgColor="173F3A")
-_HEADER_FILL = PatternFill("solid", fgColor="1F5B52")
-_REVIEW_FILL = PatternFill("solid", fgColor="FFF2CC")
-_ERROR_FILL = PatternFill("solid", fgColor="FCE8E6")
-_WARNING_FILL = PatternFill("solid", fgColor="FFF4E5")
-_ALT_FILL = PatternFill("solid", fgColor="F7F9F8")
+_TITLE_FILL = PatternFill("solid", fgColor="17324D")
+_HEADER_FILL = PatternFill("solid", fgColor="0F766E")
+_DERIVED_FILL = PatternFill("solid", fgColor="D7F0EC")
+_REVIEW_FILL = PatternFill("solid", fgColor="FEF3C7")
+_ERROR_FILL = PatternFill("solid", fgColor="FEE2E2")
+_ALT_FILL = PatternFill("solid", fgColor="F8FAFC")
 _WHITE_FONT = Font(color="FFFFFF", bold=True)
 _TITLE_FONT = Font(color="FFFFFF", bold=True, size=14)
 _HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
-_MUTED_FONT = Font(color="66706D", italic=True, size=9)
+_MUTED_FONT = Font(color="667085", italic=True, size=9)
 _LINK_FONT = Font(color="0563C1", underline="single")
 _THIN = Side(style="thin", color="D9E2DF")
 _BORDER = Border(bottom=_THIN)
@@ -146,6 +150,10 @@ _SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Speed": ("speed",),
     "Duplex": ("duplex",),
     "Media Type": ("mediatype", "media-type"),
+    "Protocol": ("protocol",),
+    "Source Port": ("src-port", "source-port"),
+    "Destination Port": ("dst-port", "destination-port"),
+    "Auto Negotiate": ("auto-negotiate", "auto_negotiate"),
 }
 
 
@@ -279,7 +287,6 @@ def _rows_for_sheet(
         "Addresses": _address_rows,
         "Wildcard FQDN": _wildcard_fqdn_rows,
         "Address Groups": _address_group_rows,
-        "Address Group Tags": _address_group_tag_rows,
         "Service Categories": _service_category_rows,
         "Services": _service_rows,
         "Service Groups": _service_group_rows,
@@ -294,7 +301,6 @@ def _rows_for_sheet(
         "VPN Phase 2": _vpn_phase2_rows,
         "DHCP Servers": _dhcp_server_rows,
         "DHCP IP Ranges": _dhcp_ip_range_rows,
-        "DHCP Exclude Ranges": _dhcp_exclude_range_rows,
         "DHCP Reservations": _dhcp_reservation_rows,
         "SD-WAN": _sdwan_rows,
         "SD-WAN Zones": _sdwan_zone_rows,
@@ -323,7 +329,6 @@ def _rows_for_sheet(
         "Interface Source Settings": _interface_source_rows,
         "Interface Nested Configuration": _interface_nested_rows,
         "Unresolved References": _unresolved_reference_rows,
-        "Warnings": _warning_rows,
         "Unsupported": _unsupported_rows,
         "Source Inventory": _source_inventory_rows,
         "Extraction Coverage": _coverage_rows,
@@ -354,11 +359,13 @@ def _build_summary(
     sheet.row_dimensions[1].height = 30
 
     metadata = [
-        ("Source file", context.source_name or "Not provided"),
+        ("Source File", context.source_name),
+        ("Hostname", _hostname(context)),
+        ("FortiOS Version", None),
+        ("VDOMs", "\n".join(_vdoms(context))),
         ("Generated UTC", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
-        ("VDOMs", "\n".join(_vdoms(context)) or "root"),
-        ("Validation errors", len(context.validation.errors)),
-        ("Validation warnings", len(context.validation.warnings)),
+        ("Validation Errors", len(context.validation.errors)),
+        ("Validation Warnings", len(context.validation.warnings)),
     ]
 
     for row_number, (label, value) in enumerate(metadata, start=3):
@@ -366,7 +373,7 @@ def _build_summary(
         sheet.cell(row_number, 2, _excel_safe(value))
         sheet.cell(row_number, 2).alignment = Alignment(wrap_text=True, vertical="top")
 
-    section_row = 10
+    section_row = 11
     sheet.cell(section_row, 1, "Inventory")
     sheet.cell(section_row, 1).fill = _HEADER_FILL
     sheet.cell(section_row, 1).font = _WHITE_FONT
@@ -383,6 +390,24 @@ def _build_summary(
             cell.hyperlink = f"#'{target}'!A1"
             cell.font = _LINK_FONT
         row_number += 1
+
+    indicator_row = row_number + 1
+    sheet.cell(indicator_row, 1, "Migration Indicators")
+    sheet.cell(indicator_row, 1).fill = _HEADER_FILL
+    sheet.cell(indicator_row, 1).font = _WHITE_FONT
+    sheet.merge_cells(
+        start_row=indicator_row,
+        start_column=1,
+        end_row=indicator_row,
+        end_column=3,
+    )
+
+    for row_number, (label, value) in enumerate(
+        _migration_indicators(context),
+        start=indicator_row + 1,
+    ):
+        sheet.cell(row_number, 1, label)
+        sheet.cell(row_number, 2, value)
 
     nav_col = 5
     sheet.cell(3, nav_col, "Workbook navigation")
@@ -443,17 +468,6 @@ def _write_table_sheet(
         cell.alignment = Alignment(wrap_text=True, vertical="center")
         cell.border = _BORDER
 
-        if sheet_name == "Interfaces" and header in {
-            "Name",
-            "Relationship",
-            "Topology Kind",
-            "Aggregate",
-            "Physical Interfaces",
-            "Topology Issues",
-            "Parent / Underlay Interface",
-            "Members",
-        }:
-            cell.fill = PatternFill("solid", fgColor="28786B")
 
     for index, row in enumerate(rows, start=4):
         for column, header in enumerate(headers, start=1):
@@ -465,19 +479,27 @@ def _write_table_sheet(
             for column in range(1, max_col + 1):
                 sheet.cell(index, column).fill = _ALT_FILL
 
+        for column, header in enumerate(headers, start=1):
+            if header in DERIVED_COLUMNS_BY_SHEET.get(sheet_name, ()):
+                sheet.cell(index, column).fill = _DERIVED_FILL
+
         outline = row.get("__outline_level__")
         if isinstance(outline, int) and outline > 0:
             sheet.row_dimensions[index].outlineLevel = min(outline, 7)
 
         if row.get("__review__"):
+            fill = _ERROR_FILL if row.get("__error__") else _REVIEW_FILL
             for column in range(1, max_col + 1):
-                sheet.cell(index, column).fill = _REVIEW_FILL
+                sheet.cell(index, column).fill = fill
 
     if rows:
         sheet.auto_filter.ref = f"A3:{get_column_letter(max_col)}{len(rows) + 3}"
 
     sheet.freeze_panes = _freeze_pane(sheet_name, headers)
     _apply_widths(sheet, headers)
+    for column, header in enumerate(headers, start=1):
+        if header in HIDDEN_COLUMNS_BY_DEFAULT.get(sheet_name, ()):
+            sheet.column_dimensions[get_column_letter(column)].hidden = True
     _add_back_link(sheet)
 
     if sheet_name == "Review Required":
@@ -503,7 +525,7 @@ def _apply_review_colors(sheet, headers: Sequence[str], row_count: int) -> None:
 
     for row in range(4, row_count + 4):
         severity = str(sheet.cell(row, severity_col).value or "").lower()
-        fill = _ERROR_FILL if severity == "error" else _WARNING_FILL
+        fill = _ERROR_FILL if severity == "error" else _REVIEW_FILL
 
         for column in range(1, len(headers) + 1):
             sheet.cell(row, column).fill = fill
@@ -557,26 +579,86 @@ def _sheet_note(
 
 def _inventory_counts(context: _ExcelContext) -> list[tuple[str, int, str]]:
     config = context.config
+    unsupported = {
+        record.source_path
+        for record in context.extracted.source_objects
+        if record.source_path not in set(registered_sections())
+    }
     return [
         ("Interfaces", len(config.interfaces), "Interfaces"),
         ("Zones", len(config.zones), "Zones"),
         ("Addresses", len(config.addresses), "Addresses"),
         ("Address Groups", len(config.address_groups), "Address Groups"),
         ("Services", len(context.derived.services.services), "Services"),
+        ("Service Groups", len(context.derived.services.groups), "Service Groups"),
         ("Policies", len(config.policies), "Policies"),
+        ("NAT Rules", len(context.derived.nat), "NAT Rules"),
         ("IP Pools", len(config.ip_pools), "IP Pools"),
         ("Virtual IPs", len(config.vips), "Virtual IPs"),
         ("Routes", len(config.static_routes), "Routes"),
-        ("VPN Phase 1", len(config.ipsec_phase1), "VPN Tunnels"),
+        ("VPN Tunnels", len(config.ipsec_phase1), "VPN Tunnels"),
         ("VPN Phase 2", len(config.ipsec_phase2), "VPN Phase 2"),
         ("Local Users", len(config.local_users), "Local Users"),
-        ("Validation Errors", len(context.validation.errors), "Review Required"),
-        ("Validation Warnings", len(context.validation.warnings), "Review Required"),
+        ("DHCP Servers", len(config.dhcp_servers), "DHCP Servers"),
+        ("SD-WAN Members", sum(len(item.members) for item in config.sdwans), "SD-WAN Members"),
+        ("SSL VPN Portals", len(config.ssl_vpn_portals), "SSL VPN Portals"),
+        ("Administrators", len(config.administrators), "Administrators"),
+        ("IPS Sensors", len(config.ips_sensors), "IPS Sensors"),
+        ("External Resources", len(config.external_resources), "External Resources"),
+        ("Review Required", len(context.validation.issues), "Review Required"),
+        ("Unsupported Source Sections", len(unsupported), "Unsupported"),
+    ]
+
+
+def _hostname(context: _ExcelContext) -> str | None:
+    for record in context.source_by_path.get("system global", ()):
+        for key, value in record.values.items():
+            if _normalize_key(key) == "hostname":
+                return value
+    return None
+
+
+def _migration_indicators(context: _ExcelContext) -> list[tuple[str, Any]]:
+    config = context.config
+    topology_issues = sum(
+        len(item.issues)
+        for item in (
+            *context.derived.topology.interfaces,
+            *context.derived.topology.vpns,
+        )
+    )
+    nat_ambiguities = sum(
+        "Multiple possible outgoing interfaces" in issue
+        for item in context.derived.nat
+        for issue in item.issues
+    )
+    ipv6_explicit = any(
+        "ipv6" in _normalize_key(key) or "ip6" in _normalize_key(key)
+        for record in context.extracted.source_objects
+        for key in record.values
+    )
+    dynamic_wan = any(
+        (interface.mode or "").lower() in {"dhcp", "pppoe"}
+        for interface in config.interfaces
+    )
+    return [
+        ("IPv6 Explicit Configuration Present", "Yes" if ipv6_explicit else "No"),
+        ("Dynamic WAN Addressing Present", "Yes" if dynamic_wan else "No"),
+        ("SD-WAN Present", "Yes" if config.sdwans else "No"),
+        ("Interface-NAT Ambiguities", nat_ambiguities),
+        ("Broken References", len(context.derived.broken_references)),
+        ("Policy Names Truncated", sum(item.truncated for item in context.derived.policy_names)),
+        ("Policy Name Collisions", sum(item.collision for item in context.derived.policy_names)),
+        ("Topology Issues", topology_issues),
     ]
 
 
 def _vdoms(context: _ExcelContext) -> list[str]:
     values = {
+        record.vdom
+        for record in context.extracted.source_objects
+    }
+    values.update(
         getattr(item, "vdom", "root")
         for collection_name in (
             "interfaces",
@@ -587,7 +669,7 @@ def _vdoms(context: _ExcelContext) -> list[str]:
             "ipsec_phase1",
         )
         for item in getattr(context.config, collection_name, ())
-    }
+    )
     return sorted(values)
 
 
@@ -599,10 +681,10 @@ def _review_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
             "Severity": issue.severity.value,
             "Category": issue.domain,
             "Object": issue.object_name,
+            "VDOM": issue.vdom,
+            "Field": issue.field,
             "Issue / Review Reason": issue.message,
-            "Status": "REVIEW_REQUIRED",
             "Source Sheet": _sheet_for_domain(issue.domain),
-            "Source Row": None,
         }
         rows.append(row)
 
@@ -610,89 +692,36 @@ def _review_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
 
 
 def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    config = context.config
     topology = {(item.vdom, item.name): item for item in context.derived.topology.interfaces}
-    vpn_topology = {(item.vdom, item.name): item for item in context.derived.topology.vpns}
-    interfaces = {(item.vdom, item.name): item for item in config.interfaces}
-
     zones_by_interface: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for zone in config.zones:
+    for zone in context.config.zones:
         for member in zone.members:
             zones_by_interface[(zone.vdom, member)].append(zone.name)
-
-    aggregate_owner: dict[tuple[str, str], str] = {}
-    for interface in config.interfaces:
-        item = topology.get((interface.vdom, interface.name))
-        if item and item.kind == "aggregate":
-            for member in interface.members:
-                aggregate_owner[(interface.vdom, member)] = interface.name
-
-    child_map: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
-    for interface in config.interfaces:
-        if interface.interface:
-            child_map[(interface.vdom, interface.interface)].append((interface.vdom, interface.name))
-
-    synthetic_vpns: dict[tuple[str, str], list[Any]] = defaultdict(list)
-    for vpn in context.derived.topology.vpns:
-        if (vpn.vdom, vpn.name) in interfaces:
-            continue
-        if vpn.attached_interface:
-            synthetic_vpns[(vpn.vdom, vpn.attached_interface)].append(vpn)
-
-    roots: list[tuple[str, str]] = []
-    for key, interface in interfaces.items():
-        if interface.interface:
-            continue
-        if key in aggregate_owner:
-            continue
-        roots.append(key)
-
-    roots.sort(key=lambda key: (key[0], _interface_rank(topology.get(key)), key[1].lower()))
     rows: list[dict[str, Any]] = []
-    visited: set[tuple[str, str]] = set()
-
-    def emit_interface(
-        key: tuple[str, str],
-        *,
-        prefix: str,
-        connector: str,
-        relation: str | None,
-        depth: int,
-    ) -> None:
-        if key in visited:
-            return
-
-        visited.add(key)
-        interface = interfaces[key]
+    for interface in context.config.interfaces:
+        key = (interface.vdom, interface.name)
         top = topology.get(key)
-        kind = top.kind if top else (interface.type or "logical")
-        symbol = _topology_symbol(kind, is_vpn=(key in vpn_topology))
-        display_name = f"{prefix}{connector}{symbol} {interface.name}".rstrip()
-
         row = {
-            "Name": display_name,
-            "Relationship": relation or "—",
-            "Topology Kind": "ipsec" if key in vpn_topology else kind,
+            "Name": interface.name,
             "Alias": interface.alias,
             "Zone": zones_by_interface.get(key, []),
             "IP / Prefix": interface.ip,
-            "Interface Type": interface.type or ("ipsec" if key in vpn_topology else kind),
+            "Type": interface.type,
             "Role": interface.role,
             "Addressing Mode": interface.mode,
             "Management Access": interface.allowaccess,
             "VLAN ID": interface.vlanid,
-            "Enabled": _enabled_text(interface.status),
-            "Source VDOM": interface.vdom,
-            "Description": interface.description,
-            "VRF": interface.vrf,
-            "Members": interface.members,
-            "Parent / Underlay Interface": interface.interface,
+            "Parent Interface": interface.interface,
             "Aggregate": top.aggregate if top else None,
             "Physical Interfaces": list(top.physical_interfaces) if top else [],
+            "Topology Path": list(top.path) if top else [interface.name],
+            "Members": interface.members,
+            "Status": _enabled_text(interface.status),
+            "Description": interface.description,
+            "VDOM": interface.vdom,
             "Topology Issues": list(top.issues) if top else [],
             "Source Explicit Fields": sorted(interface.explicit_fields),
             "Additional Settings": sanitize_source_attributes(interface.raw_extra),
-            "__outline_level__": depth,
         }
 
         _add_analysis_status(
@@ -707,39 +736,7 @@ def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
             name=interface.name,
         )
 
-        if "Additional IPv4 Addresses" in headers:
-            row["Additional IPv4 Addresses"] = [
-                secondary.ip
-                for secondary in interface.secondary_ips
-                if secondary.ip
-            ]
-
-        if "DHCP Client" in headers:
-            row["DHCP Client"] = (
-                "Yes"
-                if (interface.mode or "").lower() == "dhcp"
-                else "No"
-                if interface.mode
-                else None
-            )
-
-        if "PPPoE Mode" in headers:
-            row["PPPoE Mode"] = (
-                "Yes"
-                if (interface.mode or "").lower() == "pppoe"
-                else "No"
-                if interface.mode
-                else None
-            )
-
-        if "PPPoE Password Configured" in headers:
-            row["PPPoE Password Configured"] = _source_secret_configured(
-                context,
-                vdom=interface.vdom,
-                name=interface.name,
-                keys=("password", "passwd"),
-            )
-
+        row["Secondary IPv4 Addresses"] = [secondary.ip for secondary in interface.secondary_ips if secondary.ip]
         _overlay_raw(row, source_values, headers)
         _overlay_raw(row, interface.raw_extra, headers)
         row["Additional Settings"] = _additional_source_settings(
@@ -748,96 +745,6 @@ def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
             headers,
         )
         rows.append(row)
-
-        children: list[tuple[str, str, str]] = []
-
-        if kind == "aggregate":
-            for member in interface.members:
-                member_key = (interface.vdom, member)
-                if member_key in interfaces:
-                    children.append(("member", member, "member"))
-
-        for child_key in child_map.get(key, ()):
-            if child_key[1] in interface.members:
-                continue
-            children.append(("interface", child_key[1], "child"))
-
-        for vpn in synthetic_vpns.get(key, ()):
-            children.append(("vpn", vpn.name, "child"))
-
-        children.sort(key=lambda item: (0 if item[2] == "member" else 1, item[1].lower()))
-
-        for index, (child_type, name, relation_type) in enumerate(children):
-            last = index == len(children) - 1
-            branch = "└─ " if last else "├─ "
-            next_prefix = prefix + ("   " if connector == "└─ " else "│  " if connector else "")
-
-            if child_type in {"member", "interface"}:
-                child_key = (interface.vdom, name)
-                relation_text = (
-                    f"Member of {interface.name}"
-                    if relation_type == "member"
-                    else f"Child of {interface.name}"
-                )
-                emit_interface(
-                    child_key,
-                    prefix=next_prefix,
-                    connector=branch,
-                    relation=relation_text,
-                    depth=depth + 1,
-                )
-            else:
-                vpn = next(
-                    item
-                    for item in synthetic_vpns[key]
-                    if item.name == name
-                )
-                phase1 = next(
-                    item
-                    for item in config.ipsec_phase1
-                    if item.vdom == vpn.vdom and item.name == vpn.name
-                )
-                vpn_row = {
-                    "Name": f"{next_prefix}{branch}◈ {vpn.name}",
-                    "Relationship": f"Child of {interface.name}",
-                    "Topology Kind": "ipsec",
-                    "Interface Type": "ipsec",
-                    "Source VDOM": vpn.vdom,
-                    "Description": phase1.comments,
-                    "Parent / Underlay Interface": vpn.attached_interface,
-                    "Aggregate": vpn.aggregate,
-                    "Physical Interfaces": list(vpn.physical_interfaces),
-                    "Topology Issues": list(vpn.issues),
-                    "Source Explicit Fields": sorted(phase1.explicit_fields),
-                    "Additional Settings": sanitize_source_attributes(phase1.raw_extra),
-                    "__outline_level__": depth + 1,
-                }
-                _add_analysis_status(
-                    vpn_row,
-                    context,
-                    vdom=vpn.vdom,
-                    names=(vpn.name,),
-                )
-                rows.append(vpn_row)
-
-    for root in roots:
-        emit_interface(
-            root,
-            prefix="",
-            connector="",
-            relation=None,
-            depth=0,
-        )
-
-    # Broken/cyclic/orphaned interfaces still need to be visible.
-    for key in sorted(set(interfaces) - visited):
-        emit_interface(
-            key,
-            prefix="",
-            connector="",
-            relation="Unresolved topology",
-            depth=0,
-        )
 
     return rows
 
@@ -848,15 +755,18 @@ def _interface_secondary_rows(context: _ExcelContext, headers: Sequence[str]) ->
         for item in interface.secondary_ips:
             row = {
                 "Interface": interface.name,
-                "Secondary IP Status": "Configured",
-                "Source ID": item.id,
-                "Source IP": item.ip,
+                "ID": item.id,
                 "IP / Prefix": item.ip,
                 "Management Access": item.allowaccess,
-                "Extraction Status": "EXTRACTED",
-                "Manual Review": "No",
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "HA Priority": item.ha_priority,
+                "Additional Settings": _additional_settings(item),
             }
+            _add_analysis_status(
+                row,
+                context,
+                vdom=interface.vdom,
+                names=(interface.name, item.id),
+            )
             _overlay_raw(row, item.raw_extra, headers)
             rows.append(row)
     return rows
@@ -866,14 +776,12 @@ def _zone_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str,
     rows = []
     for item in context.config.zones:
         row = {
-            "VDOM": item.vdom,
             "Name": item.name,
-            "Zone Type": "zone",
             "Members": item.members,
             "Description": item.description,
-            "Configured Intrazone": item.intrazone,
-            "Source Path": "system zone",
-            "Additional Settings": sanitize_source_attributes(item.raw_extra),
+            "Intrazone": item.intrazone,
+            "VDOM": item.vdom,
+            "Additional Settings": _additional_settings(item),
         }
         _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
         _overlay_raw(row, item.raw_extra, headers)
@@ -900,7 +808,7 @@ def _address_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[s
                 for tag in entry.tags
             ],
             "Description": item.comment,
-            "Source Section": "firewall address6" if item.address_family == "ipv6" else "firewall address",
+            "VDOM": item.vdom,
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
         _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
@@ -916,8 +824,7 @@ def _wildcard_fqdn_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
             "Name": item.name,
             "Wildcard FQDN": item.wildcard_fqdn,
             "Description": item.comment,
-            "Source VDOM": item.vdom,
-            "Source Explicit Fields": sorted(item.explicit_fields),
+            "VDOM": item.vdom,
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
         _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
@@ -936,9 +843,9 @@ def _address_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
             "Exclude Members": item.exclude_members,
             "Description": item.comment,
             "Allow Routing": item.allow_routing,
-            "Source Category": item.category,
             "Group Type": item.type,
             "Tags": [tag for entry in item.tagging for tag in entry.tags],
+            "VDOM": item.vdom,
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
         _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
@@ -987,20 +894,16 @@ def _service_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[s
         source_item = source.get((item.vdom, item.source_name or item.name))
         row = {
             "Name": item.name,
-            "Category": getattr(source_item, "category", None),
-            "Configured Protocol": getattr(source_item, "protocol", None),
-            "Effective Protocol": item.protocol,
-            "Protocol / Destination Port": (
-                f"{item.protocol}/{item.port}" if item.port else item.protocol
-            ),
+            "Source Service": item.source_name,
+            "Protocol": item.protocol,
+            "Destination Port": item.port,
+            "Source Port": item.source_port,
+            "Protocol Number": item.protocol_number,
+            "ICMP Type": item.icmp_type,
+            "ICMP Code": item.icmp_code,
+            "Generated": item.generated,
             "Description": item.comment,
-            "Source Protocol Number": item.protocol_number,
-            "Source Port Constraint": item.source_port,
-            "Additional Settings": (
-                sanitize_source_attributes(source_item.raw_extra)
-                if source_item is not None
-                else {}
-            ),
+            "VDOM": item.vdom,
         }
         _add_analysis_status(
             row,
@@ -1022,12 +925,9 @@ def _service_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
         row = {
             "Name": item.name,
             "Members": list(item.members),
+            "Generated": item.generated,
             "Description": item.comment,
-            "Additional Settings": (
-                sanitize_source_attributes(source_item.raw_extra)
-                if source_item is not None
-                else {}
-            ),
+            "VDOM": item.vdom,
         }
         _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
         if source_item is not None:
@@ -1041,12 +941,22 @@ def _policy_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
         (item.vdom, item.policy_id): item
         for item in context.derived.policy_names
     }
+    nat = {
+        (item.vdom, item.policy_id): item
+        for item in context.derived.nat
+    }
     rows = []
     for item in context.config.policies:
         name_info = normalized.get((item.vdom, item.policy_id))
+        nat_item = nat.get((item.vdom, item.policy_id))
         row = {
             "Rule #": item.policy_id,
-            "Name": item.name,
+            "Policy Name": name_info.normalized_name if name_info else item.name,
+            "Source Name": (
+                name_info.source_name
+                if name_info is not None and name_info.truncated
+                else None
+            ),
             "Source Interface": item.srcintf,
             "Source Addresses": item.srcaddr,
             "Destination Interface": item.dstintf,
@@ -1056,45 +966,42 @@ def _policy_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
             "Schedule": item.schedule,
             "NAT Enabled": _enabled_text(item.nat),
             "UTM Status": item.utm_status,
-            "Disabled": _disabled_text(item.status),
-            "Source Policy ID": item.policy_id,
             "Source Address Negate": item.srcaddr_negate,
-            "Source IPv6 Address": item.srcaddr6,
-            "Source IPv6 Address Negate": item.srcaddr6_negate,
             "Destination Address Negate": item.dstaddr_negate,
-            "Destination IPv6 Address": item.dstaddr6,
-            "Destination IPv6 Address Negate": item.dstaddr6_negate,
             "User Groups": item.groups,
             "Users": item.users,
             "Service Negate": item.service_negate,
             "VPN Tunnel": item.vpntunnel,
-            "IP Pool Enabled": _enabled_text(item.ippool),
-            "NAT Pool": item.poolname,
-            "NAT Pool IPv6": item.poolname6,
-            "Internet Service Status": item.internet_service,
-            "Internet Services": item.internet_service_name,
             "Security Profile Group": item.profile_group,
             "Antivirus": item.av_profile,
             "IPS Sensor": item.ips_sensor,
             "Web Filter": item.webfilter_profile,
             "Application List": item.application_list,
+            "DNS Filter": item.dnsfilter_profile,
             "SSL/SSH Profile": item.ssl_ssh_profile,
-            "Source Profile Type": item.profile_type,
-            "Source Profile Group": item.profile_group,
             "Log Setting": item.logtraffic,
             "Comments": item.comments,
+            "Status": _enabled_text(item.status),
+            "SNAT Type": _nat_type(nat_item.translation_type) if nat_item else None,
+            "SNAT Address": list(nat_item.translated_addresses) if nat_item else [],
+            "IP Pool Name": list(nat_item.pool_names) if nat_item else [],
+            "VDOM": item.vdom,
             "Source Explicit Fields": sorted(item.explicit_fields),
-            "Additional Settings": sanitize_source_attributes(item.raw_extra),
+            "Additional Settings": _additional_settings(item),
         }
-        if name_info is not None:
-            row["Normalized Name"] = name_info.normalized_name
         _add_analysis_status(
             row,
             context,
             vdom=item.vdom,
             names=(item.name, item.policy_id),
+            extra_reasons=(
+                ("Policy-name normalization collision",)
+                if name_info is not None and name_info.collision
+                else ()
+            ),
         )
         _overlay_raw(row, item.raw_extra, headers)
+        _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
         rows.append(row)
     return rows
 
@@ -1143,7 +1050,15 @@ def _vip_rows(
             "External Address Objects": "extaddr",
             "External Interface": "extintf",
             "Mapped IPs": "mappedip",
-            "Mapped Address": "mapped_addr",
+            "Real Servers": lambda item: [
+                ":".join(
+                    str(value)
+                    for value in (server.ip or server.address, server.port)
+                    if value is not None
+                )
+                for server in item.realservers
+            ],
+            "Real Server Count": lambda item: len(item.realservers),
             "Port Forward": "portforward",
             "Protocol": "protocol",
             "External Port": "extport",
@@ -1155,7 +1070,6 @@ def _vip_rows(
             "Server Type": "server_type",
             "Monitors": "monitor",
             "Description": "comment",
-            "Source UUID": "uuid",
             "VDOM": "vdom",
         },
     )
@@ -1179,10 +1093,14 @@ def _vip_real_server_rows(
                 "Weight": item.weight,
                 "Monitors": item.monitor,
                 "VDOM": vip.vdom,
-                "Additional Settings": sanitize_source_attributes(
-                    item.raw_extra
-                ),
+                "Additional Settings": _additional_settings(item),
             }
+            _add_analysis_status(
+                row,
+                context,
+                vdom=vip.vdom,
+                names=(vip.name, item.id),
+            )
             _overlay_raw(
                 row,
                 item.raw_extra,
@@ -1203,7 +1121,7 @@ def _vip_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
             "Interface": "interface",
             "Members": "members",
             "Comments": "comments",
-            "Source UUID": "uuid",
+            "VDOM": "vdom",
         },
     )
 
@@ -1212,16 +1130,9 @@ def _nat_rows(
     context: _ExcelContext,
     headers: Sequence[str],
 ) -> list[dict[str, Any]]:
-    del headers
-
     policies = {
         (policy.vdom, policy.policy_id): policy
         for policy in context.config.policies
-    }
-
-    pools = {
-        (pool.vdom, pool.name): pool
-        for pool in context.config.ip_pools
     }
 
     rows: list[dict[str, Any]] = []
@@ -1231,21 +1142,9 @@ def _nat_rows(
             (item.vdom, item.policy_id)
         )
 
-        pool_objects = [
-            pools[(item.vdom, name)]
-            for name in item.pool_names
-            if (item.vdom, name) in pools
-        ]
-
         row = {
             "Rule #": item.policy_id,
-            "Name": item.policy_name,
-            "Type": "source-nat",
-            "Enabled": (
-                _enabled_text(policy.status)
-                if policy is not None
-                else None
-            ),
+            "Policy Name": item.policy_name,
             "Source Interface": (
                 policy.srcintf
                 if policy is not None
@@ -1271,49 +1170,12 @@ def _nat_rows(
                 if policy is not None
                 else []
             ),
-            "Source Translation Mode": item.translation_type,
-            "Translated Source": list(
-                item.translated_addresses
-            ),
-            "Description": (
-                policy.comments
-                if policy is not None
-                else None
-            ),
-            "Source Policy ID": item.policy_id,
-            "Source Policy UUID": (
-                sanitize_source_attributes(
-                    policy.raw_extra
-                ).get("uuid")
-                if policy is not None
-                else None
-            ),
-            "IP Pool": list(item.pool_names),
-            "IP Pool Type": [
-                pool.type
-                for pool in pool_objects
-                if pool.type
-            ],
-            "Pool Excluded IPs": [
-                excluded
-                for pool in pool_objects
-                for excluded in pool.exclude_ip
-            ],
-            "Pool Source Start IP": [
-                pool.source_startip
-                for pool in pool_objects
-                if pool.source_startip
-            ],
-            "Pool Source End IP": [
-                pool.source_endip
-                for pool in pool_objects
-                if pool.source_endip
-            ],
+            "NAT Enabled": _enabled_text(policy.nat) if policy is not None else None,
+            "SNAT Type": _nat_type(item.translation_type),
+            "SNAT Address": list(item.translated_addresses),
+            "IP Pool Name": list(item.pool_names),
             "Egress Interfaces": list(
                 item.egress_interfaces
-            ),
-            "Derived Issues": list(
-                item.issues
             ),
             "VDOM": item.vdom,
         }
@@ -1359,7 +1221,6 @@ def _route_rows(
             "Description": "comment",
             "Address Family": "address_family",
             "VDOM": "vdom",
-            "VRF": "vrf",
         },
     )
 
@@ -1382,7 +1243,7 @@ def _vpn_phase1_rows(
 
         row = {
             "Name": item.name,
-            "Interface": item.interface,
+            "Local Interface": item.interface,
             "Remote Gateway IPv4": item.remote_gw,
             "Remote Gateway DDNS": item.remotegw_ddns,
             "Type": item.type,
@@ -1396,20 +1257,15 @@ def _vpn_phase1_rows(
             "Local Gateway": item.local_gw,
             "Local ID": item.localid,
             "Peer ID": item.peerid,
-            "Certificates": item.certificate,
-            "Comments": item.comments,
+            "Certificate": item.certificate,
+            "Description": item.comments,
             "VDOM": item.vdom,
-            "Attached Interface": (
-                top.attached_interface
-                if top
-                else item.interface
-            ),
             "Aggregate": (
                 top.aggregate
                 if top
                 else None
             ),
-            "Resolved Physical Interfaces": (
+            "Attached Physical Interfaces": (
                 list(top.physical_interfaces)
                 if top
                 else []
@@ -1427,9 +1283,7 @@ def _vpn_phase1_rows(
             "Source Explicit Fields": sorted(
                 item.explicit_fields
             ),
-            "Additional Settings": sanitize_source_attributes(
-                item.raw_extra
-            ),
+            "Additional Settings": _additional_settings(item),
         }
 
         _add_analysis_status(
@@ -1479,32 +1333,23 @@ def _vpn_phase2_rows(
             "DH Groups": item.dhgrp,
             "Keylife Seconds": item.keylifeseconds,
             "Keylife KB": item.keylifekbs,
-            "Derived Source Range": (
+            "Source Range": (
                 norm.source_range
                 if norm
                 else None
             ),
-            "Derived Destination Range": (
+            "Destination Range": (
                 norm.destination_range
                 if norm
                 else None
             ),
-            "Source Address Type": item.src_addr_type,
-            "Source Subnet": item.src_subnet,
-            "Source Range Start": item.src_start_ip,
-            "Source Range End": item.src_end_ip,
-            "Destination Address Type": item.dst_addr_type,
-            "Destination Subnet": item.dst_subnet,
-            "Destination Range Start": item.dst_start_ip,
-            "Destination Range End": item.dst_end_ip,
+            "Auto Negotiate": item.auto_negotiate,
             "VDOM": item.vdom,
             "Comments": item.comments,
             "Source Explicit Fields": sorted(
                 item.explicit_fields
             ),
-            "Additional Settings": sanitize_source_attributes(
-                item.raw_extra
-            ),
+            "Additional Settings": _additional_settings(item),
         }
 
         _add_analysis_status(
@@ -1579,9 +1424,10 @@ def _dhcp_reservation_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                 "VDOM": server.vdom,
                 "Extraction Status": "EXTRACTED",
                 "Source Explicit Fields": sorted(item.explicit_fields),
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=server.vdom, names=(server.id, item.id))
             rows.append(row)
     return rows
 
@@ -1606,9 +1452,10 @@ def _dhcp_child_rows(
                 "Extraction Status": "EXTRACTED",
                 "Manual Review": "No",
                 "Source Explicit Fields": sorted(item.explicit_fields),
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=server.vdom, names=(server.id, item.id))
             rows.append(row)
     return rows
 
@@ -1621,10 +1468,11 @@ def _sdwan_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str
             "Load Balance Mode": item.load_balance_mode,
             "Extraction Status": "EXTRACTED",
             "Manual Review": "No",
-            "Additional Settings": sanitize_source_attributes(item.raw_extra),
+            "Additional Settings": _additional_settings(item),
             "VDOM": item.vdom,
         }
         _overlay_raw(row, item.raw_extra, headers)
+        _add_analysis_status(row, context, vdom=item.vdom, names=(item.vdom,))
         rows.append(row)
     return rows
 
@@ -1635,10 +1483,11 @@ def _sdwan_zone_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
         for item in sdwan.zones:
             row = {
                 "Zone Name": item.name,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
                 "VDOM": sdwan.vdom,
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=sdwan.vdom, names=(item.name,))
             rows.append(row)
     return rows
 
@@ -1659,13 +1508,14 @@ def _sdwan_member_rows(context: _ExcelContext, headers: Sequence[str]) -> list[d
                 "Weight": item.weight,
                 "Priority": item.priority,
                 "Status": item.status,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
                 "VDOM": sdwan.vdom,
-                "Resolved Physical Interfaces": list(top.physical_interfaces) if top else [],
+                "Physical Interfaces": list(top.physical_interfaces) if top else [],
                 "Aggregate": top.aggregate if top else None,
                 "Source Explicit Fields": sorted(item.explicit_fields),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=sdwan.vdom, names=(item.interface, item.seq_num))
             rows.append(row)
     return rows
 
@@ -1682,10 +1532,11 @@ def _sdwan_health_rows(context: _ExcelContext, headers: Sequence[str]) -> list[d
                 "Interval": item.interval,
                 "Fail Time": item.failtime,
                 "Recovery Time": item.recoverytime,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
                 "VDOM": sdwan.vdom,
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=sdwan.vdom, names=(item.name,))
             rows.append(row)
     return rows
 
@@ -1704,10 +1555,11 @@ def _sdwan_rule_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
                 "Priority Members": item.priority_members,
                 "Health Checks": item.health_check,
                 "Priority Zones": item.priority_zone,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
                 "VDOM": sdwan.vdom,
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=sdwan.vdom, names=(item.id, item.name))
             rows.append(row)
     return rows
 
@@ -1750,8 +1602,6 @@ def _ssl_portal_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
             "Split Tunneling": "split_tunneling",
             "Limit User Logins": "limit_user_logins",
             "FortiClient Download": "forticlient_download",
-            "Host Check": "host_check",
-            "Host Check Policies": "host_check_policy",
             "Split Tunneling Routing Addresses": "split_tunneling_routing_address",
             "VDOM": "vdom",
         },
@@ -1771,17 +1621,16 @@ def _ssl_auth_rule_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
                 "Source Interfaces": item.source_interface,
                 "Source Addresses": item.source_address,
                 "Source Address Negate": item.source_address_negate,
-                "IPv6 Source Addresses": item.source_address6,
-                "IPv6 Source Address Negate": item.source_address6_negate,
                 "Users": item.users,
                 "User Peer": item.user_peer,
                 "Groups": item.groups,
                 "Portal": item.portal,
                 "Extraction Status": "EXTRACTED",
                 "Manual Review": "No",
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=settings.vdom, names=(item.id, item.portal))
             rows.append(row)
     return rows
 
@@ -1817,10 +1666,11 @@ def _ssl_host_check_item_rows(context: _ExcelContext, headers: Sequence[str]) ->
                 "Version": item.version,
                 "Extraction Status": "EXTRACTED",
                 "Manual Review": "No",
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
-            }
-            _overlay_raw(row, item.raw_extra, headers)
-            rows.append(row)
+            "Additional Settings": _additional_settings(item),
+        }
+        _overlay_raw(row, item.raw_extra, headers)
+        _add_analysis_status(row, context, vdom=item.vdom, names=(item.vdom,))
+        rows.append(row)
     return rows
 
 
@@ -1841,15 +1691,12 @@ def _local_user_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
             "Two Factor Notification": "two_factor_notification",
             "FortiToken": "fortitoken",
             "Email": "email_to",
-            "SMS Server": "sms_server",
-            "SMS Custom Server": "sms_custom_server",
-            "SMS Phone": "sms_phone",
             "LDAP Server": "ldap_server",
             "RADIUS Server": "radius_server",
             "TACACS+ Server": "tacacs_server",
             "Auth Concurrent Override": "auth_concurrent_override",
             "Auth Concurrent Value": "auth_concurrent_value",
-            "Auth Timeout": "authtimeout",
+            "Authentication Timeout": "authtimeout",
             "Password Policy": "passwd_policy",
             "Workstation": "workstation",
             "Username Sensitivity": "username_sensitivity",
@@ -1874,7 +1721,7 @@ def _user_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
             "Match Count": lambda item: len(item.matches),
             "Auth Concurrent Override": "auth_concurrent_override",
             "Auth Concurrent Value": "auth_concurrent_value",
-            "Auth Timeout": "authtimeout",
+            "Authentication Timeout": "authtimeout",
             "VDOM": "vdom",
         },
     )
@@ -1890,9 +1737,10 @@ def _user_group_match_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                 "Server Name": item.server_name,
                 "Group Name": item.group_name,
                 "VDOM": group.vdom,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=group.vdom, names=(group.name, item.id))
             rows.append(row)
     return rows
 
@@ -1913,9 +1761,10 @@ def _user_group_guest_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                 "Comment": item.comment,
                 "Password Configured": item.password_configured,
                 "VDOM": group.vdom,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": _additional_settings(item),
             }
             _overlay_raw(row, item.raw_extra, headers)
+            _add_analysis_status(row, context, vdom=group.vdom, names=(group.name, item.id, item.name))
             rows.append(row)
     return rows
 
@@ -1930,7 +1779,6 @@ def _administrator_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
             "Access Profile": "accprofile",
             "VDOMs": "vdoms",
             "IPv4 Trusted Hosts": "trusthosts",
-            "IPv6 Trusted Hosts": "ip6_trusthosts",
             "Two Factor": "two_factor",
             "Two Factor Authentication": "two_factor_authentication",
             "Two Factor Notification": "two_factor_notification",
@@ -1985,8 +1833,14 @@ def _admin_permission_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                         "Setting": setting,
                         "Value": value,
                         "Extraction Status": "EXTRACTED",
-                        "Additional Settings": sanitize_source_attributes(permission.raw_extra),
+                        "Additional Settings": _additional_settings(permission),
                     }
+                )
+                _add_analysis_status(
+                    rows[-1],
+                    context,
+                    vdom="global",
+                    names=(profile.name, setting),
                 )
     return rows
 
@@ -2043,9 +1897,7 @@ def _ips_entry_rows(
                 "Quarantine Log": item.quarantine_log,
                 "Vulnerability Types": item.vuln_type,
                 "VDOM": sensor.vdom,
-                "Additional Settings": sanitize_source_attributes(
-                    item.raw_extra
-                ),
+                "Additional Settings": _additional_settings(item),
             }
 
             _overlay_raw(
@@ -2053,6 +1905,7 @@ def _ips_entry_rows(
                 item.raw_extra,
                 headers,
             )
+            _add_analysis_status(row, context, vdom=sensor.vdom, names=(sensor.name, item.id))
 
             rows.append(row)
 
@@ -2064,17 +1917,17 @@ def _ips_exempt_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
     for sensor in context.config.ips_sensors:
         for entry in sensor.entries:
             for item in entry.exempt_ips:
-                rows.append(
-                    {
+                row = {
                         "Sensor": sensor.name,
                         "Entry ID": entry.id,
                         "Exempt IP ID": item.id,
                         "Source IP": item.src_ip,
                         "Destination IP": item.dst_ip,
                         "VDOM": sensor.vdom,
-                        "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                        "Additional Settings": _additional_settings(item),
                     }
-                )
+                _add_analysis_status(row, context, vdom=sensor.vdom, names=(sensor.name, entry.id, item.id))
+                rows.append(row)
     return rows
 
 
@@ -2090,7 +1943,9 @@ def _security_profile_rows(
             "Name": "name",
             "Antivirus": "av_profile",
             "IPS Sensor": "ips_sensor",
+            "Application List": "application_list",
             "Web Filter": "webfilter_profile",
+            "DNS Filter": "dnsfilter_profile",
             "File Filter": "file_filter_profile",
             "SSL/SSH Profile": "ssl_ssh_profile",
             "VDOM": "vdom",
@@ -2123,7 +1978,6 @@ def _source_configuration_rows(context: _ExcelContext, headers: Sequence[str]) -
                     "Category": _source_category(record.source_path),
                     "Source Path": record.source_path,
                     "Object": record.object_name,
-                    "Source ID": record.object_name,
                     "Parent / Subsection": list(record.parent_objects),
                     "Operation": command.operation,
                     "Setting": command.key,
@@ -2131,8 +1985,6 @@ def _source_configuration_rows(context: _ExcelContext, headers: Sequence[str]) -
                         command.key,
                         command.values,
                     ),
-                    "Analysis Status": "SOURCE",
-                    "Manual Review": "No",
                 }
             )
     return rows
@@ -2201,7 +2053,7 @@ def _interface_nested_rows(context: _ExcelContext, headers: Sequence[str]) -> li
 
 def _unresolved_reference_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
     rows = []
-    for item in collect_broken_references(context.config, index=context.derived.references):
+    for item in context.derived.broken_references:
         rows.append(
             {
                 "Source VDOM": item.source_vdom,
@@ -2210,7 +2062,6 @@ def _unresolved_reference_rows(context: _ExcelContext, headers: Sequence[str]) -
                 "Field": item.source_field,
                 "Reference": item.reference,
                 "Expected Type": [kind.value for kind in item.expected_kinds],
-                "Result": "UNRESOLVED",
                 "Reason": "Reference could not be resolved in the same VDOM.",
             }
         )
@@ -2247,11 +2098,10 @@ def _unsupported_rows(context: _ExcelContext, headers: Sequence[str]) -> list[di
     return [
         {
             "Section": path,
-            "Item": count,
+            "Object Count": count,
             "Status": "SOURCE_ONLY",
             "Reason": "No dedicated typed FortiGate model is currently defined for this source section.",
-            "Manual Review": "No",
-            "Raw Capture": "Preserved in Source Inventory / FortiGate Source Configuration",
+            "Raw Capture Location": "Source Inventory / FortiGate Source Configuration",
         }
         for path, count in sorted(counts.items())
     ]
@@ -2274,7 +2124,6 @@ def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                     "Extraction Status": (
                         "TYPED" if record.source_path in registered else "SOURCE_ONLY"
                     ),
-                    "Manual Review": "No",
                 }
             )
             continue
@@ -2292,7 +2141,6 @@ def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> li
                     "Extraction Status": (
                         "TYPED" if record.source_path in registered else "SOURCE_ONLY"
                     ),
-                    "Manual Review": "No",
                 }
             )
     return rows
@@ -2463,9 +2311,7 @@ def _model_rows(
                     attribute
                 )
 
-        raw_extra = sanitize_source_attributes(
-            data.get("raw_extra", {})
-        )
+        raw_extra = _additional_settings(item, row.values())
 
         _overlay_raw(
             row,
@@ -2484,9 +2330,7 @@ def _model_rows(
         if "Additional Settings" in headers:
             row["Additional Settings"] = raw_extra
 
-        vdom = str(
-            data.get("vdom") or "global"
-        )
+        vdom = str(data.get("vdom") or "")
 
         name = (
             data.get("name")
@@ -2507,6 +2351,25 @@ def _model_rows(
     return rows
 
 
+def _additional_settings(
+    item: Any,
+    visible_values: Iterable[Any] = (),
+) -> dict[str, Any]:
+    data = item.model_dump(mode="python")
+    visible = list(visible_values)
+    settings = dict(data.get("raw_extra", {}))
+
+    for field in data.get("explicit_fields", ()):
+        if field in {"name", "vdom", "raw_extra", "explicit_fields"}:
+            continue
+        value = data.get(field)
+        if value in (None, "", [], {}) or value in visible:
+            continue
+        settings[field] = value
+
+    return sanitize_source_attributes(settings)
+
+
 def _add_analysis_status(
     row: dict[str, Any],
     context: _ExcelContext,
@@ -2521,11 +2384,12 @@ def _add_analysis_status(
     reasons = list(dict.fromkeys(reasons))
 
     row["Analysis Status"] = "REVIEW_REQUIRED" if reasons else "EXTRACTED"
-    row["Extraction Status"] = "PARTIAL" if reasons else "EXTRACTED"
-    row["Manual Review"] = "Yes" if reasons else "No"
     row["Review Reasons"] = reasons
-    row["Audit Note"] = reasons
     row["__review__"] = bool(reasons)
+    row["__error__"] = any(
+        issue.severity.value == "error"
+        for issue in issues
+    )
 
 
 def _overlay_raw(
@@ -2591,6 +2455,13 @@ def _enabled_text(value: Any) -> str | None:
     if normalized in {"disable", "disabled", "down", "no", "false", "0"}:
         return "No"
     return str(value)
+
+
+def _nat_type(value: str | None) -> str | None:
+    return {
+        "ip_pool": "IP Pool",
+        "interface_address": "Interface Address",
+    }.get(value, value)
 
 
 def _disabled_text(value: Any) -> str | None:
@@ -2708,31 +2579,7 @@ def _additional_source_settings(
         key: value
         for key, value in source_values.items()
         if key not in consumed
-        and "." not in key
     }
-
-
-def _interface_rank(item: Any) -> int:
-    kind = getattr(item, "kind", "")
-    return {
-        "aggregate": 0,
-        "physical": 1,
-        "vlan": 2,
-        "tunnel": 3,
-        "logical": 4,
-    }.get(kind, 5)
-
-
-def _topology_symbol(kind: str, *, is_vpn: bool = False) -> str:
-    if is_vpn or kind == "tunnel":
-        return "◈"
-    if kind == "aggregate":
-        return "◆"
-    if kind == "vlan":
-        return "▣"
-    if kind == "physical":
-        return "●"
-    return "◇"
 
 
 def _address_group_family(raw_extra: Mapping[str, Any]) -> str | None:

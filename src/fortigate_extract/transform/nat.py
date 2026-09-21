@@ -270,6 +270,8 @@ def _interface_nat(
             "runtime-path dependent."
         )
 
+        addresses = []
+
     return NormalizedSourceNAT(
         vdom=policy.vdom,
         policy_id=policy.policy_id,

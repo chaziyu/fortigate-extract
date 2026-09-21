@@ -8,8 +8,10 @@ from .relationships.interface_topology import (
     build_interface_topology,
 )
 from .relationships.references import (
+    BrokenReference,
     ReferenceIndex,
     build_reference_index,
+    collect_broken_references,
 )
 from .transform.nat import (
     NormalizedSourceNAT,
@@ -32,6 +34,7 @@ from .transform.vpn import (
 @dataclass(frozen=True, slots=True)
 class DerivedViews:
     references: ReferenceIndex
+    broken_references: tuple[BrokenReference, ...]
     topology: InterfaceTopology
 
     services: ServiceTransformResult
@@ -55,6 +58,12 @@ def build_derived_views(
 
     return DerivedViews(
         references=references,
+        broken_references=tuple(
+            collect_broken_references(
+                config,
+                index=references,
+            )
+        ),
         topology=build_interface_topology(
             config,
             references=references,
