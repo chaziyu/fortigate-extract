@@ -198,7 +198,7 @@ Validation / Coverage
 Every workbook follows a fixed schema. Important areas include:
 
 - `Summary` and `Review Required`
-- system, DNS, and NTP settings
+- system, DNS, NTP settings, and nested NTP server objects
 - interfaces, secondary IPs, zones, and topology
 - addresses, services, policies, and NAT
 - routes, VPN, DHCP, SD-WAN, and SSL VPN
@@ -210,8 +210,10 @@ The exact worksheet order is defined by
 reported through `Review Required` rather than a separate `Warnings` sheet.
 
 Explicit configuration without a dedicated typed model is preserved as rows
-in `FortiGate Source Inventory`, `Unsupported`, and `Extraction Coverage`. It
-does not create additional worksheets automatically.
+in `FortiGate Source Inventory`, `Unsupported`, and `Extraction Coverage`.
+Selected source-only sections may also have dedicated presentation worksheets
+when that improves traceability; source evidence does not create worksheets
+automatically by default.
 
 `Extraction Evidence` is intentionally not part of the standard workbook. Traceability is kept in the relevant object sheets, source appendix, validation sheets, and coverage sheets.
 
