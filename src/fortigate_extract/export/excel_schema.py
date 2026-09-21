@@ -1,36 +1,1026 @@
-"""Compatibility schema for the FortiGate Excel workbook.
+"""FortiGate-only Excel presentation schema.
 
-The baseline headers and worksheet order are derived from the user's original
-FortiGate workbook.  Legacy cross-vendor target sheets and the old Extraction
-Evidence sheet are intentionally excluded.  Legacy "Migration Status" headers
-are renamed to architecture-neutral "Analysis Status" where appropriate.
+This module defines workbook structure only.
 
-The payload is compressed only to keep this data-only module compact.  Export
-logic belongs in excel.py; this file is not an extraction/semantic layer.
+It contains no parsing logic, FortiOS defaults, migration IR,
+target-vendor concepts, or compatibility filtering.
 """
 
 from __future__ import annotations
 
-import base64
-import json
-import zlib
 
-
-_SCHEMA_B64 = "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"
-
-_payload = json.loads(
-    zlib.decompress(
-        base64.b64decode(_SCHEMA_B64)
-    ).decode("utf-8")
+OBJECT_TAIL = (
+    "Analysis Status",
+    "Extraction Status",
+    "Manual Review",
+    "Review Reasons",
+    "Source Explicit Fields",
+    "Additional Settings",
 )
 
-SHEET_ORDER: tuple[str, ...] = tuple(
-    _payload["order"]
+CHILD_TAIL = (
+    "Extraction Status",
+    "Manual Review",
+    "Review Reasons",
+    "Additional Settings",
 )
+
+SOURCE_HEADERS = (
+    "VDOM",
+    "Source Path",
+    "Object",
+    "Parent / Subsection",
+    "Setting",
+    "Value",
+    "Analysis Status",
+    "Extraction Status",
+    "Manual Review",
+    "Review Reasons",
+)
+
+
+def object_headers(*fields: str) -> tuple[str, ...]:
+    return (*fields, *OBJECT_TAIL)
+
+
+def child_headers(*fields: str) -> tuple[str, ...]:
+    return (*fields, *CHILD_TAIL)
+
+
+SHEET_ORDER: tuple[str, ...] = (
+    "Summary",
+    "Review Required",
+
+    # System
+    "System Settings",
+    "DNS Settings",
+    "NTP Settings",
+
+    # Network
+    "Interfaces",
+    "Interface Secondary IPs",
+    "Zones",
+
+    # Objects
+    "Addresses",
+    "Wildcard FQDN",
+    "Address Groups",
+    "Address Group Tags",
+    "Service Categories",
+    "Services",
+    "Service Groups",
+    "Schedules",
+    "Schedule Groups",
+
+    # Policies
+    "Policies",
+    "Local-In Policies",
+    "Multicast Policies",
+    "Policy Routes",
+
+    # NAT
+    "IP Pools",
+    "Virtual IPs",
+    "VIP Real Servers",
+    "VIP Groups",
+    "NAT Rules",
+
+    # Routing
+    "Routes",
+    "Routing Protocol Settings",
+    "Session TTL Settings",
+    "Session TTL Overrides",
+
+    # SD-WAN
+    "SD-WAN",
+    "SD-WAN Zones",
+    "SD-WAN Members",
+    "SD-WAN Health Checks",
+    "SD-WAN Rules",
+    "SD-WAN SLAs",
+    "SD-WAN Duplication",
+    "SD-WAN Neighbors",
+    "SD-WAN Rule SLAs",
+
+    # VPN
+    "VPN Tunnels",
+    "VPN Phase 2",
+
+    # DHCP
+    "DHCP Servers",
+    "DHCP IP Ranges",
+    "DHCP Exclude Ranges",
+    "DHCP Reservations",
+
+    # SSL VPN
+    "SSL VPN Settings",
+    "SSL VPN Portals",
+    "SSL VPN Authentication Rules",
+    "SSL VPN Host Checks",
+    "SSL VPN Host Check Items",
+    "SSL VPN Portal Split DNS",
+    "SSL VPN Portal MAC Rules",
+    "SSL VPN Portal OS Checks",
+    "SSL VPN Bookmark Groups",
+    "SSL VPN Bookmarks",
+    "SSL VPN Bookmark Form Data",
+    "SSL VPN Landing Pages",
+    "SSL VPN Landing Form Data",
+
+    # Identity
+    "Local Users",
+    "User Groups",
+    "User Group Matches",
+    "User Group Guests",
+    "LDAP Servers",
+    "RADIUS Servers",
+    "RADIUS Accounting Servers",
+    "TACACS+ Servers",
+    "SAML Servers",
+    "FSSO Servers",
+    "FSSO AD Groups",
+    "FSSO Polling",
+    "FortiTokens",
+    "Authentication Schemes",
+    "Authentication Rules",
+    "Authentication Sequences",
+    "Identity Server Endpoints",
+
+    # Administration
+    "Administrators",
+    "Admin Profiles",
+    "Admin Profile Permissions",
+
+    # Security
+    "IPS Sensors",
+    "IPS Sensor Entries",
+    "IPS Exempt IPs",
+    "Security Profiles",
+    "Source Security Profile Setting",
+    "SSL TLS Service Profiles",
+
+    # Internet services
+    "Internet Service Definitions",
+    "Internet Service Def Entries",
+    "Internet Service Def Ports",
+    "Custom Internet Services",
+    "Custom IS Entries",
+    "Custom IS Ports",
+    "Custom Internet Service Groups",
+    "Internet Service Groups",
+    "IS Additions",
+    "IS Addition Entries",
+    "IS Addition Ports",
+    "IS Appends",
+    "IS Extensions",
+    "IS Extension Disabled",
+    "IS Extension Entries",
+    "IS Extension Ports",
+
+    # Other FortiGate source
+    "DoS Policies",
+    "DoS Anomalies",
+    "Firewall Sniffer",
+    "IPv6 EH Filter",
+    "External Resources",
+
+    # Source appendix
+    "FortiGate Source Configuration",
+    "Firewall Policy Source Settings",
+    "Interface Source Settings",
+    "Interface Nested Configuration",
+
+    # Validation / coverage
+    "Unresolved References",
+    "Warnings",
+    "Unsupported",
+    "Source Inventory",
+    "Extraction Coverage",
+)
+
 
 SHEET_HEADERS: dict[str, tuple[str, ...]] = {
-    name: tuple(headers)
-    for name, headers in _payload["headers"].items()
+    "Summary": (),
+
+    "Review Required": (
+        "Severity",
+        "Category",
+        "Object",
+        "Issue / Review Reason",
+        "Status",
+        "Source Sheet",
+        "Source Row",
+    ),
+
+    "Interfaces": object_headers(
+        "Name",
+        "Relationship",
+        "Topology Kind",
+        "Alias",
+        "Zone",
+        "IP / Prefix",
+        "Additional IPv4 Addresses",
+        "Interface Type",
+        "Role",
+        "Addressing Mode",
+        "DHCP Client",
+        "PPPoE Mode",
+        "PPPoE Username",
+        "PPPoE Password Configured",
+        "Management Access",
+        "IPv6 Address",
+        "IPv6 Management Access",
+        "IPv6 Mode",
+        "VLAN ID",
+        "Parent / Underlay Interface",
+        "Members",
+        "Aggregate",
+        "Physical Interfaces",
+        "VRF",
+        "MTU",
+        "Link State",
+        "Speed",
+        "Duplex",
+        "Media Type",
+        "Description",
+        "Source VDOM",
+        "Topology Issues",
+    ),
+
+    "Interface Secondary IPs": child_headers(
+        "Interface",
+        "Secondary IP Status",
+        "Source ID",
+        "IP / Prefix",
+        "Management Access",
+    ),
+
+    "Zones": object_headers(
+        "VDOM",
+        "Name",
+        "Zone Type",
+        "Members",
+        "Configured Intrazone",
+        "Description",
+        "Source Path",
+    ),
+
+    "Addresses": object_headers(
+        "Name",
+        "Type",
+        "Value",
+        "Address Family",
+        "Associated Interface",
+        "Allow Routing",
+        "Tags",
+        "Description",
+        "Source Section",
+    ),
+
+    "Wildcard FQDN": object_headers(
+        "Name",
+        "Wildcard FQDN",
+        "Description",
+        "Source VDOM",
+    ),
+
+    "Address Groups": object_headers(
+        "Name",
+        "Address Family",
+        "Group Type",
+        "Members",
+        "Exclusion Enabled",
+        "Exclude Members",
+        "Allow Routing",
+        "Tags",
+        "Description",
+    ),
+
+    "Address Group Tags": child_headers(
+        "Group Name",
+        "Address Family",
+        "Tag Entry",
+        "Category",
+        "Tags",
+    ),
+
+    "Service Categories": child_headers(
+        "Name",
+        "Description",
+    ),
+
+    "Services": object_headers(
+        "Name",
+        "Category",
+        "Configured Protocol",
+        "Effective Protocol",
+        "Protocol / Destination Port",
+        "Source Protocol Number",
+        "Source Port Constraint",
+        "Description",
+    ),
+
+    "Service Groups": object_headers(
+        "Name",
+        "Members",
+        "Description",
+    ),
+
+    "Policies": object_headers(
+        "Rule #",
+        "Name",
+        "Normalized Name",
+        "Source Interface",
+        "Source Addresses",
+        "Source Address Negate",
+        "Source IPv6 Address",
+        "Source IPv6 Address Negate",
+        "Destination Interface",
+        "Destination Addresses",
+        "Destination Address Negate",
+        "Destination IPv6 Address",
+        "Destination IPv6 Address Negate",
+        "Services",
+        "Service Negate",
+        "Action",
+        "Schedule",
+        "Disabled",
+        "NAT Enabled",
+        "IP Pool Enabled",
+        "NAT Pool",
+        "NAT Pool IPv6",
+        "VPN Tunnel",
+        "Internet Service Status",
+        "Internet Services",
+        "User Groups",
+        "Users",
+        "UTM Status",
+        "Security Profile Group",
+        "Antivirus",
+        "IPS Sensor",
+        "Web Filter",
+        "Application List",
+        "SSL/SSH Profile",
+        "Source Profile Type",
+        "Source Profile Group",
+        "Log Setting",
+        "Comments",
+        "Source Policy ID",
+    ),
+
+    "IP Pools": object_headers(
+        "Name",
+        "Type",
+        "Start IP",
+        "End IP",
+        "Source Start IP",
+        "Source End IP",
+        "Start Port",
+        "End Port",
+        "Associated Interface",
+        "ARP Reply",
+        "ARP Interface",
+        "Permit Any Host",
+        "Excluded IPs",
+        "NAT64",
+        "Add NAT64 Route",
+        "Description",
+        "VDOM",
+    ),
+
+    "Virtual IPs": object_headers(
+        "Name",
+        "Type",
+        "Status",
+        "External IP",
+        "External Address Objects",
+        "External Interface",
+        "Mapped IPs",
+        "Mapped Address",
+        "Port Forward",
+        "Protocol",
+        "External Port",
+        "Mapped Port",
+        "ARP Reply",
+        "NAT Source VIP",
+        "Services",
+        "Load Balance Method",
+        "Server Type",
+        "Monitors",
+        "Description",
+        "Source UUID",
+        "VDOM",
+    ),
+
+    "VIP Real Servers": child_headers(
+        "VIP Name",
+        "Server ID",
+        "IP",
+        "Address",
+        "Port",
+        "Status",
+        "Weight",
+        "Monitors",
+        "VDOM",
+    ),
+
+    "VIP Groups": object_headers(
+        "Name",
+        "Interface",
+        "Members",
+        "Comments",
+        "Source UUID",
+        "VDOM",
+    ),
+
+    "NAT Rules": (
+        "Rule #",
+        "Name",
+        "Type",
+        "Enabled",
+        "Source Interface",
+        "Destination Interface",
+        "Source Addresses",
+        "Destination Addresses",
+        "Services",
+        "Source Translation Mode",
+        "Translated Source",
+        "IP Pool",
+        "IP Pool Type",
+        "Pool Excluded IPs",
+        "Pool Source Start IP",
+        "Pool Source End IP",
+        "Egress Interfaces",
+        "Description",
+        "Source Policy ID",
+        "Source Policy UUID",
+        "VDOM",
+        "Derived Issues",
+        "Analysis Status",
+        "Extraction Status",
+        "Manual Review",
+        "Review Reasons",
+    ),
+
+    "Routes": object_headers(
+        "Route ID",
+        "Destination",
+        "Destination Address Object",
+        "Interface",
+        "Gateway",
+        "Distance",
+        "Priority",
+        "Status",
+        "SD-WAN Zone",
+        "Preferred Source",
+        "Source Prefix",
+        "Dynamic Gateway",
+        "Blackhole",
+        "Description",
+        "Address Family",
+        "VDOM",
+        "VRF",
+    ),
+
+    "SD-WAN": object_headers(
+        "Status",
+        "Load Balance Mode",
+        "VDOM",
+    ),
+
+    "SD-WAN Zones": child_headers(
+        "Zone Name",
+        "VDOM",
+    ),
+
+    "SD-WAN Members": object_headers(
+        "ID",
+        "Interface",
+        "Zone",
+        "Gateway",
+        "Source",
+        "Cost",
+        "Weight",
+        "Priority",
+        "Status",
+        "Resolved Physical Interfaces",
+        "Aggregate",
+        "VDOM",
+    ),
+
+    "SD-WAN Health Checks": child_headers(
+        "Name",
+        "Server",
+        "Members",
+        "Protocol",
+        "Interval",
+        "Fail Time",
+        "Recovery Time",
+        "VDOM",
+    ),
+
+    "SD-WAN Rules": child_headers(
+        "ID",
+        "Name",
+        "Status",
+        "Mode",
+        "Source",
+        "Destination",
+        "Priority Members",
+        "Health Checks",
+        "Priority Zones",
+        "VDOM",
+    ),
+
+    "VPN Tunnels": object_headers(
+        "Name",
+        "Interface",
+        "Remote Gateway IPv4",
+        "Remote Gateway DDNS",
+        "Type",
+        "IKE Version",
+        "Authentication Method",
+        "Proposal",
+        "DH Groups",
+        "Key Lifetime",
+        "NAT Traversal",
+        "DPD",
+        "Local Gateway",
+        "Local ID",
+        "Peer ID",
+        "Certificates",
+        "Comments",
+        "VDOM",
+        "Attached Interface",
+        "Aggregate",
+        "Resolved Physical Interfaces",
+        "Topology Path",
+        "Topology Issues",
+    ),
+
+    "VPN Phase 2": object_headers(
+        "Name",
+        "Phase 1",
+        "Proposal",
+        "PFS",
+        "DH Groups",
+        "Keylife Seconds",
+        "Keylife KB",
+        "Derived Source Range",
+        "Derived Destination Range",
+        "Source Address Type",
+        "Source Subnet",
+        "Source Range Start",
+        "Source Range End",
+        "Destination Address Type",
+        "Destination Subnet",
+        "Destination Range Start",
+        "Destination Range End",
+        "VDOM",
+        "Comments",
+    ),
+
+    "DHCP Servers": object_headers(
+        "Server ID",
+        "Interface",
+        "Status",
+        "Server Type",
+        "IP Mode",
+        "Default Gateway",
+        "Netmask",
+        "Lease Time",
+        "DNS Service",
+        "DNS Server 1",
+        "DNS Server 2",
+        "DNS Server 3",
+        "DNS Server 4",
+        "Timezone Option",
+        "Timezone",
+        "Relay Agent",
+        "VDOM",
+    ),
+
+    "DHCP IP Ranges": child_headers(
+        "Server ID",
+        "Interface",
+        "Range ID",
+        "Start IP",
+        "End IP",
+        "Lease Time",
+        "VDOM",
+        "Source Explicit Fields",
+    ),
+
+    "DHCP Exclude Ranges": child_headers(
+        "Server ID",
+        "Interface",
+        "Range ID",
+        "Start IP",
+        "End IP",
+        "Lease Time",
+        "VDOM",
+        "Source Explicit Fields",
+    ),
+
+    "DHCP Reservations": child_headers(
+        "Server ID",
+        "Interface",
+        "Reservation ID",
+        "IP Address",
+        "MAC Address",
+        "Description",
+        "Action",
+        "Type",
+        "VDOM",
+        "Source Explicit Fields",
+    ),
+
+    "SSL VPN Settings": object_headers(
+        "Status",
+        "Minimum Protocol",
+        "Maximum Protocol",
+        "Authentication Timeout",
+        "Idle Timeout",
+        "Port",
+        "DNS Server 1",
+        "DNS Server 2",
+        "Server Certificate",
+        "Source Interfaces",
+        "Source Addresses",
+        "Tunnel IP Pools",
+        "Default Portal",
+        "VDOM",
+    ),
+
+    "SSL VPN Portals": object_headers(
+        "Name",
+        "Tunnel Mode",
+        "IPv6 Tunnel Mode",
+        "IP Pools",
+        "IPv6 Pools",
+        "Split Tunneling",
+        "Limit User Logins",
+        "FortiClient Download",
+        "Host Check",
+        "Host Check Policies",
+        "Split Tunneling Routing Addresses",
+        "VDOM",
+    ),
+
+    "SSL VPN Authentication Rules": child_headers(
+        "ID",
+        "Auth",
+        "Cipher",
+        "Client Certificate",
+        "Realm",
+        "Source Interfaces",
+        "Source Addresses",
+        "Source Address Negate",
+        "IPv6 Source Addresses",
+        "IPv6 Source Address Negate",
+        "Users",
+        "User Peer",
+        "Groups",
+        "Portal",
+    ),
+
+    "SSL VPN Host Checks": object_headers(
+        "Name",
+        "Type",
+        "OS Type",
+        "Version",
+        "GUID",
+        "Check Item Count",
+        "VDOM",
+    ),
+
+    "SSL VPN Host Check Items": child_headers(
+        "Host Check",
+        "ID",
+        "Action",
+        "Type",
+        "Target",
+        "MD5s",
+        "Version",
+    ),
+
+    "Local Users": object_headers(
+        "Name",
+        "ID",
+        "Status",
+        "Type",
+        "Password Configured",
+        "Password Time",
+        "Two Factor",
+        "Two Factor Authentication",
+        "Two Factor Notification",
+        "FortiToken",
+        "Email",
+        "SMS Server",
+        "SMS Custom Server",
+        "SMS Phone",
+        "LDAP Server",
+        "RADIUS Server",
+        "TACACS+ Server",
+        "Auth Concurrent Override",
+        "Auth Concurrent Value",
+        "Auth Timeout",
+        "Password Policy",
+        "Workstation",
+        "Username Sensitivity",
+        "PPK Identity",
+        "PPK Secret Configured",
+        "VDOM",
+    ),
+
+    "User Groups": object_headers(
+        "Name",
+        "ID",
+        "Group Type",
+        "Members",
+        "Match Count",
+        "Auth Concurrent Override",
+        "Auth Concurrent Value",
+        "Auth Timeout",
+        "VDOM",
+    ),
+
+    "User Group Matches": child_headers(
+        "User Group",
+        "Match ID",
+        "Server Name",
+        "Group Name",
+        "VDOM",
+    ),
+
+    "User Group Guests": child_headers(
+        "User Group",
+        "Guest ID",
+        "Name",
+        "User ID",
+        "Email",
+        "Mobile Phone",
+        "Expiration",
+        "Sponsor",
+        "Comment",
+        "Password Configured",
+        "VDOM",
+    ),
+
+    "Administrators": object_headers(
+        "Name",
+        "Access Profile",
+        "VDOMs",
+        "IPv4 Trusted Hosts",
+        "IPv6 Trusted Hosts",
+        "Two Factor",
+        "Two Factor Authentication",
+        "Two Factor Notification",
+        "Remote Auth",
+        "Remote Group",
+        "Credential Configured",
+        "FortiToken",
+        "Guest User Groups",
+        "Schedule",
+        "Peer Auth",
+        "Peer Group",
+        "SSH Certificate",
+    ),
+
+    "Admin Profiles": object_headers(
+        "Name",
+    ),
+
+    "Admin Profile Permissions": child_headers(
+        "Profile",
+        "Permission Group",
+        "Setting",
+        "Value",
+    ),
+
+    "IPS Sensors": object_headers(
+        "Name",
+        "Description",
+        "Block Malicious URL",
+        "Scan Botnet Connections",
+        "Extended Log",
+        "Replacement Message Group",
+        "Entry Count",
+        "VDOM",
+    ),
+
+    "IPS Sensor Entries": child_headers(
+        "Sensor",
+        "Entry ID",
+        "Signature IDs",
+        "CVEs",
+        "Applications",
+        "OS",
+        "Protocols",
+        "Severities",
+        "Location",
+        "Default Action",
+        "Default Status",
+        "Action",
+        "Status",
+        "Log",
+        "Log Packet",
+        "Log Attack Context",
+        "Rate Count",
+        "Rate Duration",
+        "Rate Mode",
+        "Rate Track",
+        "Quarantine",
+        "Quarantine Expiry",
+        "Quarantine Log",
+        "Vulnerability Types",
+        "VDOM",
+    ),
+
+    "IPS Exempt IPs": child_headers(
+        "Sensor",
+        "Entry ID",
+        "Exempt IP ID",
+        "Source IP",
+        "Destination IP",
+        "VDOM",
+    ),
+
+    "Security Profiles": object_headers(
+        "Name",
+        "Antivirus",
+        "IPS Sensor",
+        "Web Filter",
+        "File Filter",
+        "SSL/SSH Profile",
+        "VDOM",
+    ),
+
+    "External Resources": object_headers(
+        "Name",
+        "Resource",
+        "Type",
+        "Refresh Rate",
+        "Comments",
+        "VDOM",
+    ),
+
+    "FortiGate Source Configuration": (
+        "Category",
+        "Source Path",
+        "Object",
+        "Source ID",
+        "Parent / Subsection",
+        "Operation",
+        "Setting",
+        "Value",
+        "Analysis Status",
+        "Manual Review",
+    ),
+
+    "Firewall Policy Source Settings": (
+        "Source Policy ID",
+        "Policy Name",
+        "Operation",
+        "Setting",
+        "Ordered Source Values",
+    ),
+
+    "Interface Source Settings": (
+        "Interface",
+        "Setting",
+        "Value",
+        "Extraction Status",
+    ),
+
+    "Interface Nested Configuration": (
+        "Interface",
+        "Config Path",
+        "Node Type",
+        "Object / Edit",
+        "Operation",
+        "Setting",
+        "Value",
+        "Extraction Status",
+        "Manual Review",
+    ),
+
+    "Unresolved References": (
+        "Source VDOM",
+        "Source Type",
+        "Source Object",
+        "Field",
+        "Reference",
+        "Expected Type",
+        "Result",
+        "Reason",
+    ),
+
+    "Warnings": (
+        "ID",
+        "Category",
+        "Message",
+    ),
+
+    "Unsupported": (
+        "Section",
+        "Item",
+        "Status",
+        "Reason",
+        "Manual Review",
+        "Raw Capture",
+    ),
+
+    "Source Inventory": (
+        "Domain",
+        "Scope Type",
+        "Scope Name",
+        "Source Path",
+        "Object Name",
+        "Setting",
+        "Value",
+        "Extraction Status",
+        "Manual Review",
+    ),
+
+    "Extraction Coverage": (
+        "Source Section",
+        "Found",
+        "Source Objects",
+        "Parsed Objects",
+        "Status",
+        "Semantic Level",
+        "Parser Handler",
+        "Line Start",
+        "Line End",
+        "Semantic Unknowns",
+        "Notes",
+    ),
 }
 
-del _payload
+
+SOURCE_ONLY_SHEETS = (
+    "System Settings",
+    "DNS Settings",
+    "NTP Settings",
+    "Schedules",
+    "Schedule Groups",
+    "Local-In Policies",
+    "Multicast Policies",
+    "Policy Routes",
+    "Routing Protocol Settings",
+    "Session TTL Settings",
+    "Session TTL Overrides",
+    "SD-WAN SLAs",
+    "SD-WAN Duplication",
+    "SD-WAN Neighbors",
+    "SD-WAN Rule SLAs",
+    "SSL VPN Portal Split DNS",
+    "SSL VPN Portal MAC Rules",
+    "SSL VPN Portal OS Checks",
+    "SSL VPN Bookmark Groups",
+    "SSL VPN Bookmarks",
+    "SSL VPN Bookmark Form Data",
+    "SSL VPN Landing Pages",
+    "SSL VPN Landing Form Data",
+    "LDAP Servers",
+    "RADIUS Servers",
+    "RADIUS Accounting Servers",
+    "TACACS+ Servers",
+    "SAML Servers",
+    "FSSO Servers",
+    "FSSO AD Groups",
+    "FSSO Polling",
+    "FortiTokens",
+    "Authentication Schemes",
+    "Authentication Rules",
+    "Authentication Sequences",
+    "Identity Server Endpoints",
+    "Source Security Profile Setting",
+    "SSL TLS Service Profiles",
+    "Internet Service Definitions",
+    "Internet Service Def Entries",
+    "Internet Service Def Ports",
+    "Custom Internet Services",
+    "Custom IS Entries",
+    "Custom IS Ports",
+    "Custom Internet Service Groups",
+    "Internet Service Groups",
+    "IS Additions",
+    "IS Addition Entries",
+    "IS Addition Ports",
+    "IS Appends",
+    "IS Extensions",
+    "IS Extension Disabled",
+    "IS Extension Entries",
+    "IS Extension Ports",
+    "DoS Policies",
+    "DoS Anomalies",
+    "Firewall Sniffer",
+    "IPv6 EH Filter",
+)
+
+for sheet_name in SOURCE_ONLY_SHEETS:
+    SHEET_HEADERS[sheet_name] = SOURCE_HEADERS
+
+del sheet_name

@@ -4,7 +4,6 @@ from collections import defaultdict
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from io import BytesIO
 from pathlib import Path
 from typing import Any, BinaryIO, Iterable, Mapping, Sequence
 
@@ -25,7 +24,6 @@ from .excel_schema import SHEET_HEADERS, SHEET_ORDER
 
 _TITLE_FILL = PatternFill("solid", fgColor="173F3A")
 _HEADER_FILL = PatternFill("solid", fgColor="1F5B52")
-_TOPOLOGY_FILL = PatternFill("solid", fgColor="E8F3F0")
 _REVIEW_FILL = PatternFill("solid", fgColor="FFF2CC")
 _ERROR_FILL = PatternFill("solid", fgColor="FCE8E6")
 _WARNING_FILL = PatternFill("solid", fgColor="FFF4E5")
@@ -38,218 +36,6 @@ _LINK_FONT = Font(color="0563C1", underline="single")
 _THIN = Side(style="thin", color="D9E2DF")
 _BORDER = Border(bottom=_THIN)
 
-# The retained workbook schema is a content-compatibility baseline and still
-# contains obsolete sheets from the previous architecture.  Keep those names
-# only as an exclusion boundary; they must never be emitted by this exporter.
-_EXCLUDED_LEGACY_SHEETS = frozenset(
-    {
-        "Extraction Evidence",
-        "Firewall Filters",
-        "Checkpoint Access Rules",
-        "Cisco ACP",
-        "Default Security Rules",
-        "PBF Rules",
-        "NGFW Pre-Match Policies",
-        "NGFW Security Policies",
-        "Cisco PBR",
-        "PAN SD-WAN Interface Profiles",
-        "PAN SD-WAN Link Settings",
-        "PAN SD-WAN Path Quality",
-        "PAN SD-WAN Traffic Distribution",
-        "PAN SD-WAN Rules",
-    }
-)
-
-_EXTRA_SHEETS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "Wildcard FQDN",
-        (
-            "Name",
-            "Wildcard FQDN",
-            "Description",
-            "Source VDOM",
-            "Extraction Status",
-            "Manual Review",
-            "Review Reasons",
-            "Source Explicit Fields",
-            "Additional Settings",
-        ),
-    ),
-    (
-        "DHCP Exclude Ranges",
-        (
-            "Server ID",
-            "Interface",
-            "Range ID",
-            "Start IP",
-            "End IP",
-            "Lease Time",
-            "VDOM",
-            "Extraction Status",
-            "Manual Review",
-            "Review Reasons",
-            "Source Explicit Fields",
-            "Additional Settings",
-        ),
-    ),
-    (
-        "External Resources",
-        (
-            "Name",
-            "Resource",
-            "Type",
-            "Refresh Rate",
-            "Comments",
-            "VDOM",
-            "Extraction Status",
-            "Manual Review",
-            "Review Reasons",
-            "Source Explicit Fields",
-            "Additional Settings",
-        ),
-    ),
-)
-
-_DROP_COLUMNS_BY_SHEET: dict[str, frozenset[str]] = {
-    "System Settings": frozenset(
-        {
-            "Management IPv4 Address",
-            "Management Netmask",
-            "Management Default Gateway",
-            "Management Address Type",
-            "Management IPv6 Address",
-            "Management IPv6 Default Gateway",
-            "Management IPv6 Enabled",
-            "Management IPv6 Address Type",
-            "Management IPv6 Gateway Type",
-            "Explicit Management Services",
-            "System Permitted IPs",
-        }
-    ),
-    "Interfaces": frozenset(
-        {
-            "Virtual Router / Routing Instance",
-            "Routing Instance Type",
-            "Management Profile",
-        }
-    ),
-    "Policies": frozenset(
-        {
-            "Antispyware Profiles",
-            "Wildfire Analysis Profiles",
-            "Source Address (Original)",
-            "Source Address (Normalized)",
-            "Destination Address (Original)",
-            "Destination Address (Normalized)",
-            "Service (Original)",
-            "Service (Normalized)",
-            "Action (Original)",
-            "Action (Normalized)",
-            "Schedule (Original)",
-            "Schedule (Normalized)",
-            "Effective UTM Status",
-        }
-    ),
-    "IP Pools": frozenset(
-        {
-            "Check Point Pool Object Type",
-            "Check Point Networks",
-            "Check Point Network Groups",
-            "Check Point Address Ranges",
-            "Check Point Gateways",
-            "Check Point Member Assignments",
-            "Check Point Applicability",
-            "Check Point Precedence",
-            "Check Point VPN Scope",
-            "Check Point MEP",
-        }
-    ),
-    "NAT Rules": frozenset(
-        {
-            "Source Rule UID",
-            "Install On",
-            "Static NAT Bi-directional",
-            "Source Translation Fallback",
-            "Source Translation Method",
-        }
-    ),
-    "Routes": frozenset(
-        {
-            "Source Route ID",
-            "Destination Prefix (Normalized)",
-            "Source Destination",
-            "Destination Object / Group",
-            "Device",
-            "Next Hop",
-            "Administrative Distance",
-        }
-    ),
-    "VPN Tunnels": frozenset(
-        {
-            "IKE Crypto Profile",
-            "IPsec Crypto Profile",
-        }
-    ),
-    "Security Profiles": frozenset(
-        {
-            "Anti-Spyware",
-            "WildFire",
-        }
-    ),
-    "Extraction Coverage": frozenset(
-        {
-            "Normalized Objects",
-            "Unresolved Dependencies",
-        }
-    ),
-}
-
-
-_EXTRA_COLUMNS: dict[str, tuple[str, ...]] = {
-    "Policies": (
-        "Source Addresses",
-        "Destination Addresses",
-        "Services",
-        "Action",
-        "Schedule",
-        "UTM Status",
-        "Source Explicit Fields",
-    ),
-    "Routes": (
-        "Source Explicit Fields",
-    ),
-    "Interfaces": (
-        "Relationship",
-        "Topology Kind",
-        "Aggregate",
-        "Physical Interfaces",
-        "Topology Issues",
-        "Source Explicit Fields",
-    ),
-    "VPN Tunnels": (
-        "Attached Interface",
-        "Aggregate",
-        "Resolved Physical Interfaces",
-        "Topology Path",
-        "Topology Issues",
-        "Source Explicit Fields",
-    ),
-    "NAT Rules": (
-        "Egress Interfaces",
-        "Derived Issues",
-        "VDOM",
-    ),
-    "VPN Phase 2": (
-        "Source Range",
-        "Destination Range",
-        "Source Explicit Fields",
-    ),
-    "SD-WAN Members": (
-        "Resolved Physical Interfaces",
-        "Aggregate",
-        "Source Explicit Fields",
-    ),
-}
 
 _SOURCE_PATHS_BY_SHEET: dict[str, tuple[str, ...]] = {
     "System Settings": ("system global", "system settings"),
@@ -337,8 +123,7 @@ _SOURCE_PATHS_BY_SHEET: dict[str, tuple[str, ...]] = {
     "IPv6 EH Filter": ("firewall ipv6-eh-filter",),
 }
 
-_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
-    "Hostname": ("hostname",),
+_SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Alias": ("alias",),
     "IP / Prefix": ("ip",),
     "Interface Type": ("type",),
@@ -346,128 +131,21 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Addressing Mode": ("mode",),
     "Management Access": ("allowaccess",),
     "VLAN ID": ("vlanid",),
-    "Enabled": ("status",),
-    "Description": ("description", "comment", "comments"),
     "Parent / Underlay Interface": ("interface",),
     "Members": ("member", "members"),
-    "Timezone": ("timezone",),
-    "Admin HTTPS Port": ("admin-sport", "admin-port"),
-    "Primary DNS": ("primary",),
-    "Secondary DNS": ("secondary",),
-    "Role": ("role",),
-    "Server Address": ("server",),
-    "Authentication Type": ("authentication", "auth-type", "authmethod"),
-    "Name": ("name",),
-    "Description": ("description", "comments", "comment"),
-    "Members": ("member", "members"),
-    "Source Fabric Object": ("fabric-object",),
-    "Source Color": ("color",),
-    "Color": ("color",),
-    "Status": ("status",),
-    "Enabled": ("status",),
-    "Source Interfaces": ("source-interface", "srcintf"),
-    "Source Addresses": ("source-address", "srcaddr"),
-    "Destination Addresses": ("destination-address", "dstaddr"),
-    "Services": ("service",),
-    "Interface": ("interface",),
-    "Gateway": ("gateway",),
-    "Source": ("source", "src"),
-    "Destination": ("destination", "dst"),
-    "Comment": ("comment", "comments"),
-    "Comments": ("comments", "comment"),
-    "Port": ("port",),
-    "Protocol": ("protocol",),
-    "Type": ("type",),
-    "Minimum Protocol": ("ssl-min-proto-ver",),
-    "Maximum Protocol": ("ssl-max-proto-ver",),
-    "Server Certificate": ("servercert",),
-    "Default Portal": ("default-portal",),
-    "Tunnel IP Pools": ("tunnel-ip-pools",),
-    "Source Explicit Fields": ("__explicit_fields__",),
+    "Description": ("description", "comment", "comments"),
+    "PPPoE Username": ("username", "pppoe-username"),
     "IPv6 Address": ("ip6-address", "ipv6.ip6-address"),
-    "IPv6 Source Address": ("ip6-source-address", "ipv6.ip6-source-address"),
-    "IPv6 Management Access": ("ip6-allowaccess", "ipv6.ip6-allowaccess"),
+    "IPv6 Management Access": (
+        "ip6-allowaccess",
+        "ipv6.ip6-allowaccess",
+    ),
     "IPv6 Mode": ("ip6-mode", "ipv6.ip6-mode"),
-    "IPv6 Prefix Mode": ("ip6-prefix-mode", "ipv6.ip6-prefix-mode"),
-    "IPv6 Send Advertisement": ("ip6-send-adv", "ipv6.ip6-send-adv"),
-    "IPv6 Send Adv": ("ip6-send-adv", "ipv6.ip6-send-adv"),
-    "IPv6 Manage Flag": ("ip6-manage-flag", "ipv6.ip6-manage-flag"),
-    "DHCPv6 Information Request": (
-        "dhcp6-information-request",
-        "ipv6.dhcp6-information-request",
-    ),
-    "DHCPv6 Relay Interface ID": (
-        "dhcp6-relay-interface-id",
-        "ipv6.dhcp6-relay-interface-id",
-    ),
-    "DHCPv6 Relay IP": ("dhcp6-relay-ip", "ipv6.dhcp6-relay-ip"),
-    "DHCPv6 Relay Service": (
-        "dhcp6-relay-service",
-        "ipv6.dhcp6-relay-service",
-    ),
-    "DHCPv6 Relay Source Interface": (
-        "dhcp6-relay-source-interface",
-        "ipv6.dhcp6-relay-source-interface",
-    ),
-    "DHCPv6 Relay Source IP": (
-        "dhcp6-relay-source-ip",
-        "ipv6.dhcp6-relay-source-ip",
-    ),
-    "DHCPv6 Relay Type": ("dhcp6-relay-type", "ipv6.dhcp6-relay-type"),
-    "ICMPv6 Send Redirect": ("ip6-send-redirect", "ipv6.ip6-send-redirect"),
-    "IPv6 Interface Identifier": (
-        "ip6-interface-identifier",
-        "ipv6.ip6-interface-identifier",
-    ),
-    "IPv6 Default Life": ("ip6-default-life", "ipv6.ip6-default-life"),
-    "IPv6 DNS Server Override": (
-        "ip6-dns-server-override",
-        "ipv6.ip6-dns-server-override",
-    ),
-    "IPv6 Hop Limit": ("ip6-hop-limit", "ipv6.ip6-hop-limit"),
-    "IPv6 Link MTU": ("ip6-link-mtu", "ipv6.ip6-link-mtu"),
-    "IPv6 Max Interval": ("ip6-max-interval", "ipv6.ip6-max-interval"),
-    "IPv6 Min Interval": ("ip6-min-interval", "ipv6.ip6-min-interval"),
-    "IPv6 Reachable Time": ("ip6-reachable-time", "ipv6.ip6-reachable-time"),
-    "IPv6 Retransmit Time": ("ip6-retrans-time", "ipv6.ip6-retrans-time"),
-    "IPv6 Subnet": ("ip6-subnet", "ipv6.ip6-subnet"),
-    "IPv6 Upstream Interface": (
-        "upstream-interface",
-        "ipv6.upstream-interface",
-    ),
-    "IPv6 Managed Flag": ("ip6-manage-flag", "ipv6.ip6-manage-flag"),
-    "IPv6 Other Flag": ("ip6-other-flag", "ipv6.ip6-other-flag"),
-    "IPv6 Autoconf": ("autoconf", "ipv6.autoconf"),
-    "DHCPv6 Prefix Delegation": (
-        "dhcp6-prefix-delegation",
-        "ipv6.dhcp6-prefix-delegation",
-    ),
-    "DHCPv6 Prefix Hint": ("dhcp6-prefix-hint", "ipv6.dhcp6-prefix-hint"),
-    "DHCPv6 Prefix Hint Preferred Lifetime": (
-        "dhcp6-prefix-hint-plt",
-        "ipv6.dhcp6-prefix-hint-plt",
-    ),
-    "DHCPv6 Prefix Hint Valid Lifetime": (
-        "dhcp6-prefix-hint-vlt",
-        "ipv6.dhcp6-prefix-hint-vlt",
-    ),
-    "DHCPv6 Client Options": (
-        "dhcp6-client-options",
-        "ipv6.dhcp6-client-options",
-    ),
     "MTU": ("mtu",),
     "Link State": ("status",),
     "Speed": ("speed",),
     "Duplex": ("duplex",),
     "Media Type": ("mediatype", "media-type"),
-    "Bandwidth Monitoring": ("monitor-bandwidth",),
-    "Device Identification": ("device-identification",),
-    "NetFlow Profile": ("netflow-sampler",),
-    "Dedicated To": ("dedicated-to",),
-    "IKE SAML Server": ("ike-saml-server",),
-    "Source IP Check": ("src-check",),
-    "DNS Server Override": ("dns-server-override",),
-    "PPPoE Username": ("username", "pppoe-username"),
 }
 
 
@@ -480,16 +158,9 @@ def export_excel(
     derived: DerivedViews | None = None,
     source_name: str | None = None,
 ) -> None:
-    """
-    Write the FortiGate Excel report.
+    """Write the FortiGate configuration report."""
 
-    The original workbook remains the content-compatibility baseline for
-    worksheet names/columns.  Obsolete compatibility-only sheets and fields
-    are excluded.  Current FortiGate source and genuine derived fields are
-    added without turning Excel into a semantic layer.
-    """
-
-    del config  # reserved for future presentation-only export options
+    del config
 
     derived = derived or build_derived_views(extracted.config)
 
@@ -563,50 +234,27 @@ def _build_workbook(context: _ExcelContext) -> Workbook:
     workbook = Workbook()
     workbook.remove(workbook.active)
 
-    order = [
-        name
-        for name in SHEET_ORDER
-        if name not in _EXCLUDED_LEGACY_SHEETS
-    ]
-
-    extra_names = {name for name, _ in _EXTRA_SHEETS}
-
-    if "Addresses" in order and "Wildcard FQDN" not in order:
-        order.insert(order.index("Addresses") + 1, "Wildcard FQDN")
-
-    if "DHCP IP Ranges" in order and "DHCP Exclude Ranges" not in order:
-        order.insert(order.index("DHCP IP Ranges") + 1, "DHCP Exclude Ranges")
-
-    validation_anchor = order.index("Dependency Registry") if "Dependency Registry" in order else len(order)
-    if "External Resources" not in order:
-        order.insert(validation_anchor, "External Resources")
-
-    extra_headers = dict(_EXTRA_SHEETS)
+    order = list(SHEET_ORDER)
 
     for sheet_name in order:
         if sheet_name == "Summary":
-            _build_summary(workbook, context, order)
+            _build_summary(
+                workbook,
+                context,
+                order,
+            )
             continue
 
-        headers = list(extra_headers.get(sheet_name, SHEET_HEADERS.get(sheet_name, ())))
+        headers = list(
+            SHEET_HEADERS[sheet_name]
+        )
 
-        if not headers:
-            headers = ["Name", "Extraction Status", "Additional Settings"]
+        rows = _rows_for_sheet(
+            sheet_name,
+            context,
+            headers,
+        )
 
-        headers = [
-            "Analysis Status" if header == "Migration Status" else header
-            for header in headers
-            if header not in _DROP_COLUMNS_BY_SHEET.get(
-                sheet_name,
-                frozenset(),
-            )
-        ]
-
-        for extra in _EXTRA_COLUMNS.get(sheet_name, ()):
-            if extra not in headers:
-                _insert_extra_header(headers, extra)
-
-        rows = _rows_for_sheet(sheet_name, context, headers)
         _write_table_sheet(
             workbook,
             sheet_name,
@@ -616,29 +264,6 @@ def _build_workbook(context: _ExcelContext) -> Workbook:
         )
 
     return workbook
-
-
-def _insert_extra_header(headers: list[str], header: str) -> None:
-    if header in {
-        "Relationship",
-        "Topology Kind",
-        "Aggregate",
-        "Physical Interfaces",
-        "Topology Issues",
-    } and "Name" in headers:
-        index = headers.index("Name") + 1
-        while index < len(headers) and headers[index] in {
-            "Relationship",
-            "Topology Kind",
-            "Aggregate",
-            "Physical Interfaces",
-            "Topology Issues",
-        }:
-            index += 1
-        headers.insert(index, header)
-        return
-
-    headers.append(header)
 
 
 def _rows_for_sheet(
@@ -697,7 +322,6 @@ def _rows_for_sheet(
         "Firewall Policy Source Settings": _policy_source_rows,
         "Interface Source Settings": _interface_source_rows,
         "Interface Nested Configuration": _interface_nested_rows,
-        "Dependency Registry": _dependency_rows,
         "Unresolved References": _unresolved_reference_rows,
         "Warnings": _warning_rows,
         "Unsupported": _unsupported_rows,
@@ -915,17 +539,20 @@ def _freeze_pane(sheet_name: str, headers: Sequence[str]) -> str:
     return "A4"
 
 
-def _sheet_note(sheet_name: str, row_count: int) -> str:
+def _sheet_note(
+    sheet_name: str,
+    row_count: int,
+) -> str:
+    del sheet_name
+
     if row_count:
         return (
-            f"{row_count} record(s). Values are explicit FortiGate source data "
-            "unless a column is clearly identified as derived/analysis output."
+            f"{row_count} record(s). "
+            "Values are explicit FortiGate source data unless the column is "
+            "identified as derived or analysis output."
         )
 
-    return (
-        "No matching explicit FortiGate source records were extracted. "
-        "The worksheet is retained for compatibility with the original workbook."
-    )
+    return "No matching explicit FortiGate source records were extracted."
 
 
 def _inventory_counts(context: _ExcelContext) -> list[tuple[str, int, str]]:
@@ -1500,7 +1127,10 @@ def _ip_pool_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[s
     )
 
 
-def _vip_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _vip_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
     return _model_rows(
         context,
         context.config.vips,
@@ -1509,7 +1139,6 @@ def _vip_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
             "Name": "name",
             "Type": "type",
             "Status": "status",
-            "Enabled": lambda item: _enabled_text(item.status),
             "External IP": "extip",
             "External Address Objects": "extaddr",
             "External Interface": "extintf",
@@ -1521,21 +1150,23 @@ def _vip_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
             "Mapped Port": "mappedport",
             "ARP Reply": "arp_reply",
             "NAT Source VIP": "nat_source_vip",
-            "Service": "service",
             "Services": "service",
             "Load Balance Method": "ldb_method",
             "Server Type": "server_type",
-            "Monitor": "monitor",
             "Monitors": "monitor",
-            "Comment": "comment",
             "Description": "comment",
             "Source UUID": "uuid",
+            "VDOM": "vdom",
         },
     )
 
 
-def _vip_real_server_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _vip_real_server_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
     rows = []
+
     for vip in context.config.vips:
         for item in vip.realservers:
             row = {
@@ -1546,13 +1177,19 @@ def _vip_real_server_rows(context: _ExcelContext, headers: Sequence[str]) -> lis
                 "Port": item.port,
                 "Status": item.status,
                 "Weight": item.weight,
-                "Monitor": item.monitor,
                 "Monitors": item.monitor,
                 "VDOM": vip.vdom,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": sanitize_source_attributes(
+                    item.raw_extra
+                ),
             }
-            _overlay_raw(row, item.raw_extra, headers)
+            _overlay_raw(
+                row,
+                item.raw_extra,
+                headers,
+            )
             rows.append(row)
+
     return rows
 
 
@@ -1571,17 +1208,23 @@ def _vip_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
     )
 
 
-def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _nat_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    del headers
+
     policies = {
         (policy.vdom, policy.policy_id): policy
         for policy in context.config.policies
     }
+
     pools = {
         (pool.vdom, pool.name): pool
         for pool in context.config.ip_pools
     }
 
-    rows = []
+    rows: list[dict[str, Any]] = []
 
     for item in context.derived.nat:
         policy = policies.get(
@@ -1613,12 +1256,12 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
                 if policy is not None
                 else list(item.egress_interfaces)
             ),
-            "Original Source": (
+            "Source Addresses": (
                 policy.srcaddr
                 if policy is not None
                 else []
             ),
-            "Original Destination": (
+            "Destination Addresses": (
                 policy.dstaddr
                 if policy is not None
                 else []
@@ -1629,7 +1272,9 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
                 else []
             ),
             "Source Translation Mode": item.translation_type,
-            "Translated Source": list(item.translated_addresses),
+            "Translated Source": list(
+                item.translated_addresses
+            ),
             "Description": (
                 policy.comments
                 if policy is not None
@@ -1637,7 +1282,9 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
             ),
             "Source Policy ID": item.policy_id,
             "Source Policy UUID": (
-                sanitize_source_attributes(policy.raw_extra).get("uuid")
+                sanitize_source_attributes(
+                    policy.raw_extra
+                ).get("uuid")
                 if policy is not None
                 else None
             ),
@@ -1662,14 +1309,12 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
                 for pool in pool_objects
                 if pool.source_endip
             ],
-            "Original Service": (
-                policy.service
-                if policy is not None
-                else []
+            "Egress Interfaces": list(
+                item.egress_interfaces
             ),
-            "Source Translation Method": item.translation_type,
-            "Egress Interfaces": list(item.egress_interfaces),
-            "Derived Issues": list(item.issues),
+            "Derived Issues": list(
+                item.issues
+            ),
             "VDOM": item.vdom,
         }
 
@@ -1677,7 +1322,10 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
             row,
             context,
             vdom=item.vdom,
-            names=(item.policy_name, item.policy_id),
+            names=(
+                item.policy_name,
+                item.policy_id,
+            ),
             extra_reasons=item.issues,
         )
 
@@ -1686,13 +1334,15 @@ def _nat_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, 
     return rows
 
 
-def _route_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _route_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
     return _model_rows(
         context,
         context.config.static_routes,
         headers,
         {
-            "Name": lambda item: str(item.seq_num) if item.seq_num is not None else None,
             "Route ID": "seq_num",
             "Destination": "dst",
             "Destination Address Object": "dstaddr",
@@ -1701,79 +1351,126 @@ def _route_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str
             "Distance": "distance",
             "Priority": "priority",
             "Status": "status",
-            "Enabled": lambda item: _enabled_text(item.status),
             "SD-WAN Zone": "sdwan_zone",
-            "SD-WAN Zones": "sdwan_zone",
             "Preferred Source": "preferred_source",
-            "Source": "src",
             "Source Prefix": "src",
             "Dynamic Gateway": "dynamic_gateway",
             "Blackhole": "blackhole",
-            "Comment": "comment",
             "Description": "comment",
             "Address Family": "address_family",
             "VDOM": "vdom",
             "VRF": "vrf",
-            "Additional Settings": "raw_extra",
-            "Source Explicit Fields": "explicit_fields",
         },
     )
 
 
-def _vpn_phase1_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    topology = {(item.vdom, item.name): item for item in context.derived.topology.vpns}
-    rows = []
+def _vpn_phase1_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    topology = {
+        (item.vdom, item.name): item
+        for item in context.derived.topology.vpns
+    }
+
+    rows: list[dict[str, Any]] = []
+
     for item in context.config.ipsec_phase1:
-        top = topology.get((item.vdom, item.name))
+        top = topology.get(
+            (item.vdom, item.name)
+        )
+
         row = {
             "Name": item.name,
             "Interface": item.interface,
-            "Local Interface": item.interface,
             "Remote Gateway IPv4": item.remote_gw,
             "Remote Gateway DDNS": item.remotegw_ddns,
             "Type": item.type,
             "IKE Version": item.ike_version,
             "Authentication Method": item.authmethod,
             "Proposal": item.proposal,
-            "IKE Proposal": item.proposal,
             "DH Groups": item.dhgrp,
             "Key Lifetime": item.keylife,
             "NAT Traversal": item.nattraversal,
             "DPD": item.dpd,
-            "DPD Mode": item.dpd,
             "Local Gateway": item.local_gw,
             "Local ID": item.localid,
             "Peer ID": item.peerid,
-            "Certificate": item.certificate,
             "Certificates": item.certificate,
             "Comments": item.comments,
-            "Description": item.comments,
             "VDOM": item.vdom,
-            "Attached Interface": top.attached_interface if top else item.interface,
-            "Aggregate": top.aggregate if top else None,
-            "Resolved Physical Interfaces": list(top.physical_interfaces) if top else [],
-            "Topology Path": list(top.path) if top else [],
-            "Topology Issues": list(top.issues) if top else [],
-            "Source Explicit Fields": sorted(item.explicit_fields),
-            "Additional Settings": sanitize_source_attributes(item.raw_extra),
+            "Attached Interface": (
+                top.attached_interface
+                if top
+                else item.interface
+            ),
+            "Aggregate": (
+                top.aggregate
+                if top
+                else None
+            ),
+            "Resolved Physical Interfaces": (
+                list(top.physical_interfaces)
+                if top
+                else []
+            ),
+            "Topology Path": (
+                list(top.path)
+                if top
+                else []
+            ),
+            "Topology Issues": (
+                list(top.issues)
+                if top
+                else []
+            ),
+            "Source Explicit Fields": sorted(
+                item.explicit_fields
+            ),
+            "Additional Settings": sanitize_source_attributes(
+                item.raw_extra
+            ),
         }
+
         _add_analysis_status(
             row,
             context,
             vdom=item.vdom,
             names=(item.name,),
-            extra_reasons=(top.issues if top else ()),
+            extra_reasons=(
+                top.issues
+                if top
+                else ()
+            ),
         )
-        _overlay_raw(row, item.raw_extra, headers)
+
+        _overlay_raw(
+            row,
+            item.raw_extra,
+            headers,
+        )
+
         rows.append(row)
+
     return rows
 
 
-def _vpn_phase2_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    normalized = {(item.vdom, item.name): item for item in context.derived.vpn.phase2}
-    rows = []
+def _vpn_phase2_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    normalized = {
+        (item.vdom, item.name): item
+        for item in context.derived.vpn.phase2
+    }
+
+    rows: list[dict[str, Any]] = []
+
     for item in context.config.ipsec_phase2:
-        norm = normalized.get((item.vdom, item.name))
+        norm = normalized.get(
+            (item.vdom, item.name)
+        )
+
         row = {
             "Name": item.name,
             "Phase 1": item.phase1name,
@@ -1782,12 +1479,16 @@ def _vpn_phase2_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
             "DH Groups": item.dhgrp,
             "Keylife Seconds": item.keylifeseconds,
             "Keylife KB": item.keylifekbs,
-            "Key Lifetime": item.keylifeseconds,
-            "Keylife Kilobytes": item.keylifekbs,
-            "Source Range": norm.source_range if norm else None,
-            "Destination Range": norm.destination_range if norm else None,
-            "Source Selector": norm.source_range if norm else None,
-            "Destination Selector": norm.destination_range if norm else None,
+            "Derived Source Range": (
+                norm.source_range
+                if norm
+                else None
+            ),
+            "Derived Destination Range": (
+                norm.destination_range
+                if norm
+                else None
+            ),
             "Source Address Type": item.src_addr_type,
             "Source Subnet": item.src_subnet,
             "Source Range Start": item.src_start_ip,
@@ -1798,16 +1499,36 @@ def _vpn_phase2_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
             "Destination Range End": item.dst_end_ip,
             "VDOM": item.vdom,
             "Comments": item.comments,
-            "Source Explicit Fields": sorted(item.explicit_fields),
-            "Additional Settings": sanitize_source_attributes(item.raw_extra),
+            "Source Explicit Fields": sorted(
+                item.explicit_fields
+            ),
+            "Additional Settings": sanitize_source_attributes(
+                item.raw_extra
+            ),
         }
-        _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
-        _overlay_raw(row, item.raw_extra, headers)
+
+        _add_analysis_status(
+            row,
+            context,
+            vdom=item.vdom,
+            names=(item.name,),
+        )
+
+        _overlay_raw(
+            row,
+            item.raw_extra,
+            headers,
+        )
+
         rows.append(row)
+
     return rows
 
 
-def _dhcp_server_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _dhcp_server_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
     return _model_rows(
         context,
         context.config.dhcp_servers,
@@ -1816,28 +1537,16 @@ def _dhcp_server_rows(context: _ExcelContext, headers: Sequence[str]) -> list[di
             "Server ID": "id",
             "Interface": "interface",
             "Status": "status",
-            "Enabled": lambda item: _enabled_text(item.status),
             "Server Type": "server_type",
             "IP Mode": "ip_mode",
             "Default Gateway": "default_gateway",
             "Netmask": "netmask",
             "Lease Time": "lease_time",
-            "Lease Time (Seconds)": "lease_time",
             "DNS Service": "dns_service",
             "DNS Server 1": "dns_server1",
             "DNS Server 2": "dns_server2",
             "DNS Server 3": "dns_server3",
             "DNS Server 4": "dns_server4",
-            "DNS Servers": lambda item: [
-                value
-                for value in (
-                    item.dns_server1,
-                    item.dns_server2,
-                    item.dns_server3,
-                    item.dns_server4,
-                )
-                if value
-            ],
             "Timezone Option": "timezone_option",
             "Timezone": "timezone",
             "Relay Agent": "relay_agent",
@@ -2300,30 +2009,28 @@ def _ips_sensor_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
     )
 
 
-def _ips_entry_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    rows = []
+def _ips_entry_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
     for sensor in context.config.ips_sensors:
         for item in sensor.entries:
             row = {
                 "Sensor": sensor.name,
                 "Entry ID": item.id,
-                "Rule": item.rule,
                 "Signature IDs": item.rule,
-                "CVE": item.cve,
                 "CVEs": item.cve,
-                "Application": item.application,
                 "Applications": item.application,
                 "OS": item.os,
-                "Protocol": item.protocol,
                 "Protocols": item.protocol,
-                "Severity": item.severity,
                 "Severities": item.severity,
                 "Location": item.location,
                 "Default Action": item.default_action,
                 "Default Status": item.default_status,
                 "Action": item.action,
                 "Status": item.status,
-                "Enabled": _enabled_text(item.status),
                 "Log": item.log,
                 "Log Packet": item.log_packet,
                 "Log Attack Context": item.log_attack_context,
@@ -2336,10 +2043,19 @@ def _ips_entry_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
                 "Quarantine Log": item.quarantine_log,
                 "Vulnerability Types": item.vuln_type,
                 "VDOM": sensor.vdom,
-                "Additional Settings": sanitize_source_attributes(item.raw_extra),
+                "Additional Settings": sanitize_source_attributes(
+                    item.raw_extra
+                ),
             }
-            _overlay_raw(row, item.raw_extra, headers)
+
+            _overlay_raw(
+                row,
+                item.raw_extra,
+                headers,
+            )
+
             rows.append(row)
+
     return rows
 
 
@@ -2362,7 +2078,10 @@ def _ips_exempt_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dic
     return rows
 
 
-def _security_profile_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _security_profile_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
     return _model_rows(
         context,
         context.config.profile_groups,
@@ -2370,11 +2089,10 @@ def _security_profile_rows(context: _ExcelContext, headers: Sequence[str]) -> li
         {
             "Name": "name",
             "Antivirus": "av_profile",
-            "Vulnerability": "ips_sensor",
-            "URL Filtering": "webfilter_profile",
-            "File Blocking": "file_filter_profile",
-            "SSL Decryption": "ssl_ssh_profile",
-            "Description": None,
+            "IPS Sensor": "ips_sensor",
+            "Web Filter": "webfilter_profile",
+            "File Filter": "file_filter_profile",
+            "SSL/SSH Profile": "ssl_ssh_profile",
             "VDOM": "vdom",
         },
     )
@@ -2447,7 +2165,6 @@ def _interface_source_rows(context: _ExcelContext, headers: Sequence[str]) -> li
             rows.append(
                 {
                     "Interface": record.object_name,
-                    "Source Vendor": "FortiGate",
                     "Setting": command.key,
                     "Value": _safe_command_value(
                         command.key,
@@ -2482,11 +2199,6 @@ def _interface_nested_rows(context: _ExcelContext, headers: Sequence[str]) -> li
     return rows
 
 
-def _dependency_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    # Compatibility view over the current FortiGate relationship model.
-    return _unresolved_reference_rows(context, headers)
-
-
 def _unresolved_reference_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
     rows = []
     for item in collect_broken_references(context.config, index=context.derived.references):
@@ -2499,25 +2211,29 @@ def _unresolved_reference_rows(context: _ExcelContext, headers: Sequence[str]) -
                 "Reference": item.reference,
                 "Expected Type": [kind.value for kind in item.expected_kinds],
                 "Result": "UNRESOLVED",
-                "Normalization Status": "UNRESOLVED",
                 "Reason": "Reference could not be resolved in the same VDOM.",
             }
         )
     return rows
 
 
-def _warning_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    rows = []
-    for index, issue in enumerate(context.validation.warnings, start=1):
-        rows.append(
-            {
-                "ID": index,
-                "Category": issue.domain,
-                "Confidence": "VALIDATION",
-                "Message": issue.message,
-            }
+def _warning_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    del headers
+
+    return [
+        {
+            "ID": index,
+            "Category": issue.domain,
+            "Message": issue.message,
+        }
+        for index, issue in enumerate(
+            context.validation.warnings,
+            start=1,
         )
-    return rows
+    ]
 
 
 def _unsupported_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
@@ -2550,7 +2266,6 @@ def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> li
         if not safe_values:
             rows.append(
                 {
-                    "Vendor": "FortiGate",
                     "Domain": _source_category(record.source_path),
                     "Scope Type": "Object" if record.object_name is not None else "Config",
                     "Scope Name": record.object_name,
@@ -2567,7 +2282,6 @@ def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> li
         for setting, value in safe_values.items():
             rows.append(
                 {
-                    "Vendor": "FortiGate",
                     "Domain": _source_category(record.source_path),
                     "Scope Type": "Object" if record.object_name is not None else "Config",
                     "Scope Name": record.object_name,
@@ -2584,37 +2298,69 @@ def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> li
     return rows
 
 
-def _coverage_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    registered = set(registered_sections())
-    records_by_path = context.source_by_path
-    rows = []
+def _coverage_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    del headers
 
-    for path in sorted(records_by_path):
-        records = records_by_path[path]
+    registered = set(
+        registered_sections()
+    )
+
+    rows: list[dict[str, Any]] = []
+
+    for path in sorted(
+        context.source_by_path
+    ):
+        records = context.source_by_path[path]
+        typed = path in registered
+
         rows.append(
             {
                 "Source Section": path,
                 "Found": "Yes",
                 "Source Objects": len(records),
                 "Parsed Objects": len(records),
-                "Normalized Objects": None,
-                "Status": "TYPED" if path in registered else "SOURCE_ONLY",
-                "Semantic Level": "typed-source" if path in registered else "raw-source",
+                "Status": (
+                    "TYPED"
+                    if typed
+                    else "SOURCE_ONLY"
+                ),
+                "Semantic Level": (
+                    "typed-source"
+                    if typed
+                    else "raw-source"
+                ),
                 "Parser Handler": "command evaluator",
                 "Line Start": min(
-                    (record.start_line_number for record in records if record.start_line_number is not None),
+                    (
+                        record.start_line_number
+                        for record in records
+                        if record.start_line_number is not None
+                    ),
                     default=None,
                 ),
                 "Line End": max(
-                    (record.end_line_number for record in records if record.end_line_number is not None),
+                    (
+                        record.end_line_number
+                        for record in records
+                        if record.end_line_number is not None
+                    ),
                     default=None,
                 ),
-                "Semantic Unknowns": 0 if path in registered else len(records),
-                "Unresolved Dependencies": None,
+                "Semantic Unknowns": (
+                    0
+                    if typed
+                    else len(records)
+                ),
                 "Notes": (
                     "Typed primitive source extraction available."
-                    if path in registered
-                    else "Explicit source retained generically; no dedicated source model yet."
+                    if typed
+                    else (
+                        "Explicit source retained without a dedicated "
+                        "typed source model."
+                    )
                 ),
             }
         )
@@ -2627,70 +2373,68 @@ def _generic_source_rows(
     context: _ExcelContext,
     headers: Sequence[str],
 ) -> list[dict[str, Any]]:
-    paths = _SOURCE_PATHS_BY_SHEET.get(sheet_name, ())
+    del headers
 
-    if not paths:
-        return []
+    paths = _SOURCE_PATHS_BY_SHEET.get(
+        sheet_name,
+        (),
+    )
 
     rows: list[dict[str, Any]] = []
 
     for path in paths:
-        for record in context.source_by_path.get(path, ()):
-            rows.append(_generic_record_row(record, context, headers))
+        for record in context.source_by_path.get(
+            path,
+            (),
+        ):
+            values = sanitize_source_attributes(
+                record.values
+            )
+
+            if not values:
+                row = {
+                    "VDOM": record.vdom,
+                    "Source Path": record.source_path,
+                    "Object": record.object_name,
+                    "Parent / Subsection": list(
+                        record.parent_objects
+                    ),
+                    "Setting": None,
+                    "Value": None,
+                }
+
+                _add_analysis_status(
+                    row,
+                    context,
+                    vdom=record.vdom,
+                    names=(record.object_name,),
+                )
+
+                rows.append(row)
+                continue
+
+            for setting, value in values.items():
+                row = {
+                    "VDOM": record.vdom,
+                    "Source Path": record.source_path,
+                    "Object": record.object_name,
+                    "Parent / Subsection": list(
+                        record.parent_objects
+                    ),
+                    "Setting": setting,
+                    "Value": value,
+                }
+
+                _add_analysis_status(
+                    row,
+                    context,
+                    vdom=record.vdom,
+                    names=(record.object_name,),
+                )
+
+                rows.append(row)
 
     return rows
-
-
-def _generic_record_row(
-    record: SourceObjectRecord,
-    context: _ExcelContext,
-    headers: Sequence[str],
-) -> dict[str, Any]:
-    values = sanitize_source_attributes(record.values)
-    row: dict[str, Any] = {
-        "Name": record.object_name,
-        "Source Context": record.vdom,
-        "Source VDOM": record.vdom,
-        "VDOM": record.vdom,
-        "Source Path": record.source_path,
-        "Object / Instance": record.object_name,
-        "Object": record.object_name,
-        "ID": record.object_name,
-        "Source ID": record.object_name,
-        "Parent / Subsection": list(record.parent_objects),
-        "Source Explicit Fields": list(record.explicit_fields),
-        "Extraction Status": "EXTRACTED",
-        "Analysis Status": "EXTRACTED",
-        "Manual Review": "No",
-    }
-
-    consumed: set[str] = set()
-
-    for header in headers:
-        if header in row:
-            continue
-        value, source_key = _lookup_source_header(header, values)
-        if source_key is not None:
-            row[header] = value
-            consumed.add(source_key)
-
-    extra = {
-        key: value
-        for key, value in values.items()
-        if key not in consumed
-    }
-
-    if "Additional Settings" in headers:
-        row["Additional Settings"] = extra
-
-    _add_analysis_status(
-        row,
-        context,
-        vdom=record.vdom,
-        names=(record.object_name,),
-    )
-
-    return row
 
 
 def _model_rows(
@@ -2702,46 +2446,61 @@ def _model_rows(
     rows: list[dict[str, Any]] = []
 
     for item in objects:
-        data = item.model_dump(mode="python")
+        data = item.model_dump(
+            mode="python"
+        )
+
         row: dict[str, Any] = {}
 
         for header, attribute in mapping.items():
+            if header not in headers:
+                continue
+
             if callable(attribute):
                 row[header] = attribute(item)
             elif attribute:
-                row[header] = data.get(attribute)
+                row[header] = data.get(
+                    attribute
+                )
 
-        # Populate compatibility columns only when the header maps directly to
-        # a current source-model field.  Semantic aliases belong in the explicit
-        # per-sheet mapping above, not in generic Excel heuristics.
-        for header in headers:
-            if header in row:
-                continue
+        raw_extra = sanitize_source_attributes(
+            data.get("raw_extra", {})
+        )
 
-            key = _header_to_model_key(header)
-            if key in data:
-                row[header] = data[key]
-
-        raw_extra = sanitize_source_attributes(data.get("raw_extra", {}))
-        _overlay_raw(row, raw_extra, headers)
+        _overlay_raw(
+            row,
+            raw_extra,
+            headers,
+        )
 
         if "Source Explicit Fields" in headers:
-            row["Source Explicit Fields"] = sorted(data.get("explicit_fields", []))
-
-        if "Typed Source Fields" in headers:
-            row["Typed Source Fields"] = sorted(data.get("explicit_fields", []))
+            row["Source Explicit Fields"] = sorted(
+                data.get(
+                    "explicit_fields",
+                    [],
+                )
+            )
 
         if "Additional Settings" in headers:
             row["Additional Settings"] = raw_extra
 
-        vdom = str(data.get("vdom") or "global")
+        vdom = str(
+            data.get("vdom") or "global"
+        )
+
         name = (
             data.get("name")
             or data.get("policy_id")
             or data.get("seq_num")
             or data.get("id")
         )
-        _add_analysis_status(row, context, vdom=vdom, names=(name,))
+
+        _add_analysis_status(
+            row,
+            context,
+            vdom=vdom,
+            names=(name,),
+        )
 
         rows.append(row)
 
@@ -2794,57 +2553,29 @@ def _lookup_source_header(
         for key, value in values.items()
     }
 
-    candidates = list(_HEADER_ALIASES.get(header, ()))
-    candidates.extend(_header_candidates(header))
-
-    for candidate in candidates:
-        normalized = _normalize_key(candidate)
-        if normalized in normalized_values:
-            source_key, value = normalized_values[normalized]
-            return value, source_key
-
-    return None, None
-
-
-def _header_candidates(header: str) -> list[str]:
-    value = header.lower()
-    replacements = {
-        " / ": " ",
-        "/": " ",
-        "(": " ",
-        ")": " ",
-        "#": " number ",
-        "+": " ",
-        ":": " ",
-    }
-    for old, new in replacements.items():
-        value = value.replace(old, new)
-
-    words = [
-        word
-        for word in value.replace("_", " ").replace("-", " ").split()
-        if word not in {
-            "source",
-            "configured",
-            "setting",
-            "settings",
-            "explicit",
-            "additional",
-        }
+    candidates = [
+        *_SOURCE_HEADER_ALIASES.get(
+            header,
+            (),
+        ),
+        header,
     ]
 
-    if not words:
-        return []
+    for candidate in candidates:
+        normalized = _normalize_key(
+            candidate
+        )
 
-    joined = "-".join(words)
-    return [joined, "_".join(words)]
+        if normalized not in normalized_values:
+            continue
 
+        source_key, value = normalized_values[
+            normalized
+        ]
 
-def _header_to_model_key(header: str) -> str:
-    return "_".join(
-        word
-        for word in _header_candidates(header)[:1][0].replace("-", " ").split()
-    ) if _header_candidates(header) else ""
+        return value, source_key
+
+    return None, None
 
 
 def _normalize_key(value: Any) -> str:

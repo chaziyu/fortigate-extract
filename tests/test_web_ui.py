@@ -72,6 +72,10 @@ class WebUITest(unittest.TestCase):
             "Configuration overview",
             html,
         )
+        self.assertNotIn(
+            "Source extraction · derived views · validation · Excel",
+            html,
+        )
         self.assertIn(
             'id="validation-error-count"',
             html,
