@@ -12,6 +12,7 @@ from fortigate_extract.export import export_excel
 from fortigate_extract.export.excel_schema import SHEET_HEADERS, SHEET_ORDER
 from fortigate_extract.extraction.extractor import extract_fortigate_config
 from fortigate_extract.parser import parse_fortigate_config
+from fortigate_extract.security.extraction import sanitize_source_attributes, sanitize_source_value
 from fortigate_extract.validation.validator import validate_config
 
 
@@ -407,6 +408,52 @@ end
         self.assertEqual(
             sum(max(1, len(record.commands)) for record in extracted.source_objects),
             len(inventory_rows),
+        )
+        self.assertEqual("A4", inventory.freeze_panes)
+        self.assertEqual(f"A3:J{len(inventory_rows) + 3}", inventory.auto_filter.ref)
+        self.assertEqual(60, inventory.column_dimensions["I"].width)
+        self.assertEqual("#'Summary'!A1", inventory[2][inventory.max_column - 1].hyperlink.target)
+        self.assertTrue(
+            all(
+                cell.fill.fill_type is None
+                for row in inventory.iter_rows(min_row=4)
+                for cell in row
+            )
+        )
+
+        unknown_workbook = self._workbook(
+            r'''
+config firewall unsupported-section
+    edit "unknown"
+        mystery-setting "opaque"
+    next
+end
+''',
+        )
+        unknown_headers, unknown_rows = self._rows(unknown_workbook["FortiGate Source Inventory"])
+        self.assertIn("unknown", {row[unknown_headers.index("Operation")] for row in unknown_rows})
+
+    def test_source_value_sanitization_matches_attribute_sanitization(self):
+        values = {
+            "passwd": "secret",
+            "psksecret": "secret",
+            "api-key": "secret",
+            "some-shared-secret": "secret",
+            "passwd-time": "metadata",
+            "has-psk": "Yes",
+            "ordinary-setting": "value",
+        }
+        sanitized = sanitize_source_attributes(values)
+        self.assertEqual("[REDACTED]", sanitize_source_value("passwd", "secret"))
+        self.assertEqual("[REDACTED]", sanitize_source_value("psksecret", "secret"))
+        self.assertEqual("[REDACTED]", sanitize_source_value("api-key", "secret"))
+        self.assertEqual("[REDACTED]", sanitize_source_value("some-shared-secret", "secret"))
+        self.assertEqual("metadata", sanitize_source_value("passwd-time", "metadata"))
+        self.assertEqual("Yes", sanitize_source_value("has-psk", "Yes"))
+        self.assertEqual("value", sanitize_source_value("ordinary-setting", "value"))
+        self.assertEqual(
+            sanitized,
+            {key.replace("-", "_"): sanitize_source_value(key, value) for key, value in values.items()},
         )
 
     def test_analysis_status_is_scoped_by_validation_domain(self):

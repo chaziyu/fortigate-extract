@@ -5,7 +5,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable, Mapping, Sequence
+from typing import Any, BinaryIO, Iterable, Iterator, Mapping, Sequence
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -15,7 +15,7 @@ from ..config import ExtractionConfig
 from ..derived import DerivedViews, build_derived_views
 from ..extraction.result import ExtractionResult
 from ..extraction.source_inventory import SourceObjectRecord
-from ..security.extraction import sanitize_source_attributes
+from ..security.extraction import sanitize_source_attributes, sanitize_source_value
 from ..section_registry import registered_sections
 from ..validation.models import ValidationIssue, ValidationResult
 from .excel_schema import (
@@ -61,6 +61,19 @@ _SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Source Port": ("src-port", "source-port"),
     "Destination Port": ("dst-port", "destination-port"),
     "Auto Negotiate": ("auto-negotiate", "auto_negotiate"),
+}
+
+_SOURCE_INVENTORY_WIDTHS = {
+    "Domain": 24,
+    "VDOM": 14,
+    "Scope Type": 14,
+    "Source Path": 34,
+    "Object": 32,
+    "Parent / Subsection": 32,
+    "Operation": 12,
+    "Setting": 36,
+    "Value": 60,
+    "Extraction Status": 18,
 }
 
 
@@ -172,6 +185,10 @@ def _build_workbook(context: _ExcelContext) -> Workbook:
             )
             continue
 
+        if sheet_name == "FortiGate Source Inventory":
+            _write_source_inventory_sheet(workbook, context)
+            continue
+
         headers = list(
             SHEET_HEADERS[sheet_name]
         )
@@ -248,7 +265,6 @@ def _rows_for_sheet(
         "Interface Nested Configuration": _interface_nested_rows,
         "Unresolved References": _unresolved_reference_rows,
         "Unsupported": _unsupported_rows,
-        "FortiGate Source Inventory": _fortigate_source_inventory_rows,
         "Extraction Coverage": _coverage_rows,
     }
 
@@ -422,6 +438,48 @@ def _write_table_sheet(
 
     if sheet_name == "Review Required":
         _apply_review_colors(sheet, headers, len(rows))
+
+
+def _write_source_inventory_sheet(
+    workbook: Workbook,
+    context: _ExcelContext,
+) -> None:
+    sheet_name = "FortiGate Source Inventory"
+    headers = SHEET_HEADERS[sheet_name]
+    row_count = _source_inventory_row_count(context)
+    sheet = workbook.create_sheet(sheet_name)
+    sheet.sheet_view.showGridLines = False
+    sheet.sheet_view.zoomScale = 90
+
+    max_col = len(headers)
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
+    sheet.cell(1, 1, sheet_name)
+    sheet.cell(1, 1).fill = _TITLE_FILL
+    sheet.cell(1, 1).font = _TITLE_FONT
+    sheet.cell(1, 1).alignment = Alignment(vertical="center")
+    sheet.row_dimensions[1].height = 24
+
+    sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=max_col - 1)
+    note = sheet.cell(2, 1)
+    note.value = _sheet_note(sheet_name, row_count)
+    note.font = _MUTED_FONT
+    note.alignment = Alignment(wrap_text=True, vertical="top")
+
+    for column, header in enumerate(headers, start=1):
+        cell = sheet.cell(3, column, header)
+        cell.fill = _HEADER_FILL
+        cell.font = _HEADER_FONT
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+        cell.border = _BORDER
+
+    for values in _iter_fortigate_source_inventory_rows(context):
+        sheet.append(values)
+
+    sheet.auto_filter.ref = f"A3:J{row_count + 3}"
+    sheet.freeze_panes = "A4"
+    for column, header in enumerate(headers, start=1):
+        sheet.column_dimensions[get_column_letter(column)].width = _SOURCE_INVENTORY_WIDTHS[header]
+    _add_back_link(sheet)
 
 
 def _add_back_link(sheet) -> None:
@@ -2126,36 +2184,41 @@ def _unsupported_rows(context: _ExcelContext, headers: Sequence[str]) -> list[di
     ]
 
 
-def _fortigate_source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    rows = []
+def _iter_fortigate_source_inventory_rows(
+    context: _ExcelContext,
+) -> Iterator[tuple[Any, ...]]:
     registered = set(registered_sections())
 
     for record in context.extracted.source_objects:
         status = "TYPED" if record.source_path in registered else "SOURCE_ONLY"
-        base = {
-            "Domain": _source_category(record.source_path),
-            "VDOM": record.vdom,
-            "Scope Type": "Object" if record.object_name is not None else "Config",
-            "Source Path": record.source_path,
-            "Object": record.object_name,
-            "Parent / Subsection": list(record.parent_objects),
-            "Extraction Status": status,
-        }
+        base = (
+            _excel_safe(_source_category(record.source_path)),
+            _excel_safe(record.vdom),
+            _excel_safe("Object" if record.object_name is not None else "Config"),
+            _excel_safe(record.source_path),
+            _excel_safe(record.object_name),
+            _excel_safe("\n".join(record.parent_objects) or None),
+        )
 
         if not record.commands:
-            rows.append(base)
+            yield (*base, None, None, None, _excel_safe(status))
             continue
 
         for command in record.commands:
-            rows.append(
-                {
-                    **base,
-                    "Operation": command.operation,
-                    "Setting": command.key,
-                    "Value": _safe_command_value(command.key, command.values),
-                }
+            yield (
+                *base,
+                _excel_safe(command.operation),
+                _excel_safe(command.key),
+                _excel_safe(_safe_command_value(command.key, command.values)),
+                _excel_safe(status),
             )
-    return rows
+
+
+def _source_inventory_row_count(context: _ExcelContext) -> int:
+    return sum(
+        max(1, len(record.commands))
+        for record in context.extracted.source_objects
+    )
 
 
 def _coverage_rows(
@@ -2636,7 +2699,6 @@ def _safe_command_value(
     rules used for raw_extra/source inventory.
     """
 
-    normalized_key = str(key).lower().replace("-", "_")
     raw_values = list(values)
     raw_value: Any
 
@@ -2647,15 +2709,7 @@ def _safe_command_value(
     else:
         raw_value = raw_values
 
-    sanitized = sanitize_source_attributes(
-        {
-            key: raw_value,
-        }
-    )
-
-    return sanitized.get(
-        normalized_key
-    )
+    return sanitize_source_value(key, raw_value)
 
 
 def _excel_safe(value: Any) -> Any:
