@@ -169,6 +169,8 @@ end
 config firewall unsupported-section
     edit "source-only"
         set unsupported-setting "preserve-me"
+        append unsupported-list "first" "second"
+        unset unsupported-setting
     next
 end
 
@@ -219,6 +221,9 @@ class ExcelReportTest(unittest.TestCase):
             "Interface Source Settings", "Interface Nested Configuration",
         }
         self.assertTrue(removed.isdisjoint(workbook.sheetnames))
+        self.assertIn("FortiGate Source Inventory", workbook.sheetnames)
+        self.assertNotIn("Source Inventory", workbook.sheetnames)
+        self.assertNotIn("FortiGate Source Configuration", workbook.sheetnames)
         for sheet_name in SHEET_ORDER:
             if sheet_name == "Summary":
                 continue
@@ -363,9 +368,46 @@ end
         self.assertEqual("10.100.0.0-10.100.0.255", by_name["VPN-subnet"][phase2.index("Source Range")])
         self.assertEqual("10.100.0.10-10.100.0.20", by_name["VPN-range"][phase2.index("Source Range")])
 
-        inventory_values = [cell.value for row in workbook["Source Inventory"].iter_rows() for cell in row]
+        inventory = workbook["FortiGate Source Inventory"]
+        inventory_headers, inventory_rows = self._rows(inventory)
+        self.assertEqual(
+            list(SHEET_HEADERS["FortiGate Source Inventory"]),
+            inventory_headers,
+        )
+        self.assertEqual("root", inventory_rows[0][inventory_headers.index("VDOM")])
+        self.assertIn(
+            "port1",
+            str(next(row for row in inventory_rows if row[inventory_headers.index("Setting")] == "ha-priority")[inventory_headers.index("Parent / Subsection")]),
+        )
+        operations = {row[inventory_headers.index("Operation")] for row in inventory_rows}
+        self.assertTrue({"set", "append", "unset"}.issubset(operations))
+        self.assertEqual(
+            "TYPED",
+            next(row for row in inventory_rows if row[inventory_headers.index("Object")] == "port2")[inventory_headers.index("Extraction Status")],
+        )
+        self.assertEqual(
+            "SOURCE_ONLY",
+            next(row for row in inventory_rows if row[inventory_headers.index("Object")] == "source-only")[inventory_headers.index("Extraction Status")],
+        )
+        self.assertIsNone(
+            next(row for row in inventory_rows if row[inventory_headers.index("Object")] == "port2")[inventory_headers.index("Operation")],
+        )
+        unsupported, unsupported_rows = self._rows(workbook["Unsupported"])
+        source_only = next(row for row in unsupported_rows if row[unsupported.index("Section")] == "firewall unsupported-section")
+        self.assertEqual("FortiGate Source Inventory", source_only[unsupported.index("Raw Capture Location")])
+        self.assertNotIn("do-not-export-this-secret", inventory_values := [cell.value for row in inventory.iter_rows() for cell in row])
+        self.assertNotIn("another-do-not-export-secret", inventory_values)
         self.assertIn("2001:db8:100::1/64", inventory_values)
         self.assertIn("preserve-me", inventory_values)
+
+        extracted = extract_fortigate_config(
+            parse_fortigate_config(_SAMPLE_CONFIG),
+            config=ExtractionConfig(),
+        )
+        self.assertEqual(
+            sum(max(1, len(record.commands)) for record in extracted.source_objects),
+            len(inventory_rows),
+        )
 
     def test_analysis_status_is_scoped_by_validation_domain(self):
         workbook = self._workbook(

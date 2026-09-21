@@ -233,7 +233,7 @@ Security Profiles
 
 External Resources
 
-FortiGate Source Configuration
+FortiGate Source Inventory
 Firewall Policy Source Settings
 Interface Source Settings
 Interface Nested Configuration
@@ -241,7 +241,7 @@ Interface Nested Configuration
 Unresolved References
 Warnings
 Unsupported
-Source Inventory
+FortiGate Source Inventory
 Extraction Coverage
 ```
 
@@ -413,8 +413,7 @@ Examples may include:
 These records can be surfaced through:
 
 ```text
-Source Inventory
-FortiGate Source Configuration
+FortiGate Source Inventory
 Unsupported
 Extraction Coverage
 ```

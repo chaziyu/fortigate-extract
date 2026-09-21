@@ -243,13 +243,12 @@ def _rows_for_sheet(
         "IPS Exempt IPs": _ips_exempt_rows,
         "Security Profiles": _security_profile_rows,
         "External Resources": _external_resource_rows,
-        "FortiGate Source Configuration": _source_configuration_rows,
         "Firewall Policy Source Settings": _policy_source_rows,
         "Interface Source Settings": _interface_source_rows,
         "Interface Nested Configuration": _interface_nested_rows,
         "Unresolved References": _unresolved_reference_rows,
         "Unsupported": _unsupported_rows,
-        "Source Inventory": _source_inventory_rows,
+        "FortiGate Source Inventory": _fortigate_source_inventory_rows,
         "Extraction Coverage": _coverage_rows,
     }
 
@@ -484,7 +483,12 @@ def _sheet_note(
     sheet_name: str,
     row_count: int,
 ) -> str:
-    del sheet_name
+    if sheet_name == "FortiGate Source Inventory":
+        return (
+            "Explicit FortiGate source commands retained for traceability. "
+            "Extraction Status identifies whether the source section has "
+            "dedicated typed extraction support."
+        )
 
     if row_count:
         return (
@@ -2005,27 +2009,6 @@ def _external_resource_rows(context: _ExcelContext, headers: Sequence[str]) -> l
     )
 
 
-def _source_configuration_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
-    rows = []
-    for record in context.extracted.source_objects:
-        for command in record.commands:
-            rows.append(
-                {
-                    "Category": _source_category(record.source_path),
-                    "Source Path": record.source_path,
-                    "Object": record.object_name,
-                    "Parent / Subsection": list(record.parent_objects),
-                    "Operation": command.operation,
-                    "Setting": command.key,
-                    "Value": _safe_command_value(
-                        command.key,
-                        command.values,
-                    ),
-                }
-            )
-    return rows
-
-
 def _policy_source_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
     rows = []
     policy_names = {str(item.policy_id): item.name for item in context.config.policies if item.policy_id is not None}
@@ -2137,46 +2120,39 @@ def _unsupported_rows(context: _ExcelContext, headers: Sequence[str]) -> list[di
             "Object Count": count,
             "Status": "SOURCE_ONLY",
             "Reason": "No dedicated typed FortiGate model is currently defined for this source section.",
-            "Raw Capture Location": "Source Inventory / FortiGate Source Configuration",
+            "Raw Capture Location": "FortiGate Source Inventory",
         }
         for path, count in sorted(counts.items())
     ]
 
 
-def _source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
+def _fortigate_source_inventory_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
     rows = []
     registered = set(registered_sections())
 
     for record in context.extracted.source_objects:
-        safe_values = sanitize_source_attributes(record.values)
-        if not safe_values:
-            rows.append(
-                {
-                    "Domain": _source_category(record.source_path),
-                    "Scope Type": "Object" if record.object_name is not None else "Config",
-                    "Scope Name": record.object_name,
-                    "Source Path": record.source_path,
-                    "Object Name": record.object_name,
-                    "Extraction Status": (
-                        "TYPED" if record.source_path in registered else "SOURCE_ONLY"
-                    ),
-                }
-            )
+        status = "TYPED" if record.source_path in registered else "SOURCE_ONLY"
+        base = {
+            "Domain": _source_category(record.source_path),
+            "VDOM": record.vdom,
+            "Scope Type": "Object" if record.object_name is not None else "Config",
+            "Source Path": record.source_path,
+            "Object": record.object_name,
+            "Parent / Subsection": list(record.parent_objects),
+            "Extraction Status": status,
+        }
+
+        if not record.commands:
+            rows.append(base)
             continue
 
-        for setting, value in safe_values.items():
+        for command in record.commands:
             rows.append(
                 {
-                    "Domain": _source_category(record.source_path),
-                    "Scope Type": "Object" if record.object_name is not None else "Config",
-                    "Scope Name": record.object_name,
-                    "Source Path": record.source_path,
-                    "Object Name": record.object_name,
-                    "Setting": setting,
-                    "Value": value,
-                    "Extraction Status": (
-                        "TYPED" if record.source_path in registered else "SOURCE_ONLY"
-                    ),
+                    **base,
+                    "Operation": command.operation,
+                    "Setting": command.key,
+                    "Value": _safe_command_value(command.key, command.values),
                 }
             )
     return rows
@@ -2646,7 +2622,7 @@ def _sheet_for_domain(domain: str) -> str:
         "static_route": "Routes",
         "user_group": "User Groups",
         "ips_sensor": "IPS Sensors",
-    }.get(domain, "Source Inventory")
+    }.get(domain, "FortiGate Source Inventory")
 
 
 def _safe_command_value(

@@ -16,8 +16,8 @@ SHEET_ORDER: tuple[str, ...] = (
     "Local Users", "User Groups", "User Group Matches", "User Group Guests",
     "Administrators", "Admin Profiles", "Admin Profile Permissions",
     "IPS Sensors", "IPS Sensor Entries", "IPS Exempt IPs", "Security Profiles",
-    "External Resources", "Unresolved References", "Unsupported", "Source Inventory",
-    "FortiGate Source Configuration", "Extraction Coverage",
+    "External Resources", "Unresolved References", "Unsupported", "FortiGate Source Inventory",
+    "Extraction Coverage",
 )
 
 
@@ -81,8 +81,7 @@ SHEET_HEADERS: dict[str, tuple[str, ...]] = {
     "External Resources": ("Name", "Resource", "Type", "Refresh Rate", "Comments", "VDOM", "Analysis Status", "Review Reasons", "Additional Settings"),
     "Unresolved References": ("Source VDOM", "Source Type", "Source Object", "Field", "Reference", "Expected Type", "Reason"),
     "Unsupported": ("Section", "Object Count", "Status", "Reason", "Raw Capture Location"),
-    "Source Inventory": ("Domain", "Scope Type", "Scope Name", "Source Path", "Object Name", "Setting", "Value", "Extraction Status"),
-    "FortiGate Source Configuration": ("Category", "Source Path", "Object", "Parent / Subsection", "Operation", "Setting", "Value"),
+    "FortiGate Source Inventory": ("Domain", "VDOM", "Scope Type", "Source Path", "Object", "Parent / Subsection", "Operation", "Setting", "Value", "Extraction Status"),
     "Extraction Coverage": ("Source Section", "Found", "Source Objects", "Parsed Objects", "Status", "Semantic Level", "Parser Handler", "Line Start", "Line End", "Semantic Unknowns", "Notes"),
 }
 
