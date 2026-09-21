@@ -118,12 +118,14 @@ def _selector_range(
     issues: list[VPNSelectorIssue],
 ) -> str | None:
     if selector == "source":
+        addr_type = phase2.src_addr_type
         start = phase2.src_start_ip
         end = phase2.src_end_ip
         subnet = phase2.src_subnet
         name = phase2.src_name
 
     elif selector == "destination":
+        addr_type = phase2.dst_addr_type
         start = phase2.dst_start_ip
         end = phase2.dst_end_ip
         subnet = phase2.dst_subnet
@@ -134,11 +136,15 @@ def _selector_range(
             f"Unknown selector: {selector}"
         )
 
+    # An explicit ip selector is one host, not an incomplete range.
+    if addr_type == "ip":
+        return f"{start}-{start}" if start else None
+
     # --------------------------------------------------------------
     # Explicit range
     # --------------------------------------------------------------
 
-    if start or end:
+    if addr_type == "range" and (start or end):
         if not start or not end:
             issues.append(
                 VPNSelectorIssue(
@@ -156,6 +162,23 @@ def _selector_range(
         return (
             f"{start}-{end}"
         )
+
+    if addr_type not in {"subnet", "name", "range"} and (start or end):
+        if not start or not end:
+            issues.append(
+                VPNSelectorIssue(
+                    vdom=phase2.vdom,
+                    phase2=phase2.name,
+                    selector=selector,
+                    message=(
+                        "Selector has only one "
+                        "range endpoint."
+                    ),
+                )
+            )
+            return None
+
+        return f"{start}-{end}"
 
     # --------------------------------------------------------------
     # Subnet → first-last address

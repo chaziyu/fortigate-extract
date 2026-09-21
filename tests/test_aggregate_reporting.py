@@ -35,6 +35,36 @@ end
 
 
 class AggregateReportingTest(unittest.TestCase):
+    def test_standalone_logical_interfaces_do_not_report_missing_parents(self):
+        config = FGConfig(
+            interfaces=[
+                FGInterface(name="l2t.root", type="tunnel"),
+                FGInterface(name="naf.root", type="tunnel"),
+                FGInterface(name="ssl.root", type="tunnel"),
+                FGInterface(name="loop1", type="loopback"),
+                FGInterface(name="vlan100", type="vlan"),
+                FGInterface(name="agg1", type="aggregate", members=[]),
+            ]
+        )
+
+        topology = build_derived_views(config).topology
+        by_name = {item.name: item for item in topology.interfaces}
+
+        for name in ("l2t.root", "naf.root", "ssl.root", "loop1"):
+            self.assertEqual(by_name[name].path, (name,))
+            self.assertIsNone(by_name[name].aggregate)
+            self.assertEqual(by_name[name].physical_interfaces, ())
+            self.assertEqual(by_name[name].issues, ())
+
+        self.assertEqual(
+            by_name["vlan100"].issues,
+            ("Logical interface has no resolvable physical parent.",),
+        )
+        self.assertEqual(
+            by_name["agg1"].issues,
+            ("Aggregate/redundant interface has no configured members.",),
+        )
+
     def test_real_path_populates_interface_aggregate_columns(self):
         extracted = extract_fortigate_config(
             parse_fortigate_config(_CONFIG),
@@ -66,11 +96,11 @@ class AggregateReportingTest(unittest.TestCase):
             row[headers.index("Name")]: row
             for row in sheet.iter_rows(min_row=4, values_only=True)
         }
-        self.assertEqual(rows["port1"][headers.index("Aggregate")], "agg1")
-        self.assertEqual(rows["port2"][headers.index("Aggregate")], "agg1")
-        self.assertEqual(rows["agg1"][headers.index("Members")], "port1\nport2")
-        self.assertEqual(rows["agg1"][headers.index("Physical Interfaces")], "port1\nport2")
-        self.assertEqual(rows["vlan100"][headers.index("Aggregate")], "agg1")
+        self.assertEqual(rows["├─ ● port1"][headers.index("Aggregate")], "agg1")
+        self.assertEqual(rows["├─ ● port2"][headers.index("Aggregate")], "agg1")
+        self.assertEqual(rows["◆ agg1"][headers.index("Members")], "port1\nport2")
+        self.assertEqual(rows["◆ agg1"][headers.index("Physical Interfaces")], "port1\nport2")
+        self.assertEqual(rows["└─ ▣ vlan100"][headers.index("Aggregate")], "agg1")
 
     def test_invalid_membership_is_scoped_and_reviewable(self):
         config = FGConfig(
@@ -122,7 +152,7 @@ class AggregateReportingTest(unittest.TestCase):
             (row[headers.index("VDOM")], row[headers.index("Name")]): row
             for row in sheet.iter_rows(min_row=4, values_only=True)
         }
-        empty = rows[("a", "agg1")]
+        empty = rows[("a", "◆ agg1")]
         self.assertIsNone(empty[headers.index("Physical Interfaces")])
         self.assertEqual(empty[headers.index("Analysis Status")], "REVIEW_REQUIRED")
         self.assertTrue(empty[headers.index("Topology Issues")])

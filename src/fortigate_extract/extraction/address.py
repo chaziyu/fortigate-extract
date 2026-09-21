@@ -59,12 +59,14 @@ def extract_addresses(
         tree,
         config,
         section_path="firewall addrgrp",
+        address_family="ipv4",
     )
 
     _extract_address_groups(
         tree,
         config,
         section_path="firewall addrgrp6",
+        address_family="ipv6",
     )
 
     _extract_wildcard_fqdns(
@@ -156,6 +158,7 @@ def _extract_address_groups(
     config: AddressConfig,
     *,
     section_path: str,
+    address_family: str,
 ) -> None:
     for source in iter_section_edits(
         tree,
@@ -176,6 +179,7 @@ def _extract_address_groups(
                 "exclude_member": "exclude_members",
             },
         )
+        attributes["address_family"] = address_family
 
         # Tagging is currently explicitly declared for firewall addrgrp.
         if section_path == "firewall addrgrp":

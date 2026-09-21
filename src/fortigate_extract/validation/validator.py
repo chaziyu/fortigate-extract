@@ -170,7 +170,7 @@ def validate_config(
             bool((backend.ip or "").strip() or (backend.address or "").strip())
             for backend in vip.realservers
         )
-        if usable_backends >= 2:
+        if usable_backends > 0:
             continue
 
         issues.append(
@@ -181,8 +181,8 @@ def validate_config(
                 object_name=vip.name,
                 field="realservers",
                 message=(
-                    "Load-balancing VIP has fewer than two usable "
-                    "configured real-server backends."
+                    "Load-balancing VIP has no configured real-server "
+                    "backend with an IP or address."
                 ),
             )
         )
@@ -261,8 +261,8 @@ def _duplicate_object_issue(
         object_name=duplicate.name,
         field="name",
         message=(
-            "Duplicate object name in the same "
-            "VDOM and object type."
+            "Multiple explicit objects with this name were extracted in "
+            "the same VDOM and object type; source identity is ambiguous."
         ),
     )
 

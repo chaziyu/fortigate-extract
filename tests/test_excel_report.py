@@ -233,14 +233,25 @@ class ExcelReportTest(unittest.TestCase):
         workbook = self._workbook()
         interfaces, rows = self._rows(workbook["Interfaces"])
         name = interfaces.index("Name")
-        names = {row[name] for row in rows}
-        self.assertEqual({"wan-dhcp", "wan-pppoe", "port1", "port2", "agg1", "vlan100"}, names)
+        names = [row[name] for row in rows]
+        self.assertEqual(
+            {"◆ agg1", "├─ ● port1", "├─ ● port2", "└─ ▣ vlan100", "   └─ ◈ VPN-HQ", "● wan-dhcp", "● wan-pppoe"},
+            set(names),
+        )
         by_name = {row[name]: row for row in rows}
-        self.assertEqual("dhcp", by_name["wan-dhcp"][interfaces.index("Addressing Mode")])
-        self.assertIsNone(by_name["port2"][interfaces.index("Addressing Mode")])
-        self.assertEqual("agg1", by_name["vlan100"][interfaces.index("Parent Interface")])
-        self.assertEqual("port1\nport2", by_name["vlan100"][interfaces.index("Physical Interfaces")])
-        self.assertNotIn("VPN-HQ", names)
+        self.assertEqual("dhcp", by_name["● wan-dhcp"][interfaces.index("Addressing Mode")])
+        self.assertIsNone(by_name["├─ ● port2"][interfaces.index("Addressing Mode")])
+        self.assertEqual("agg1", by_name["└─ ▣ vlan100"][interfaces.index("Parent Interface")])
+        self.assertEqual("port1\nport2", by_name["└─ ▣ vlan100"][interfaces.index("Physical Interfaces")])
+        self.assertLess(names.index("◆ agg1"), names.index("├─ ● port1"))
+        self.assertLess(names.index("├─ ● port1"), names.index("├─ ● port2"))
+        self.assertLess(names.index("├─ ● port2"), names.index("└─ ▣ vlan100"))
+        self.assertLess(names.index("└─ ▣ vlan100"), names.index("   └─ ◈ VPN-HQ"))
+        vpn = by_name["   └─ ◈ VPN-HQ"]
+        self.assertEqual("vlan100", vpn[interfaces.index("Parent Interface")])
+        self.assertEqual("agg1", vpn[interfaces.index("Aggregate")])
+        self.assertEqual("port1\nport2", vpn[interfaces.index("Physical Interfaces")])
+        self.assertEqual("VPN-HQ\nvlan100\nagg1", vpn[interfaces.index("Topology Path")])
 
         secondary, rows = self._rows(workbook["Interface Secondary IPs"])
         row = rows[0]
@@ -251,6 +262,50 @@ class ExcelReportTest(unittest.TestCase):
         summary_values = {summary.cell(row, 1).value: summary.cell(row, 2).value for row in range(1, summary.max_row + 1)}
         self.assertEqual("FG-TEST", summary_values["Hostname"])
         self.assertEqual("Yes", summary_values["IPv6 Explicit Configuration Present"])
+
+    def test_topology_edge_rows_remain_visible(self):
+        workbook = self._workbook(
+            r'''
+config system interface
+    edit "physical"
+    next
+    edit "agg-missing"
+        set type aggregate
+        set member "missing-member"
+    next
+    edit "orphan"
+        set type vlan
+        set interface "missing-parent"
+    next
+    edit "cycle-a"
+        set interface "cycle-b"
+    next
+    edit "cycle-b"
+        set interface "cycle-a"
+    next
+end
+
+config vpn ipsec phase1-interface
+    edit "VPN-physical"
+        set interface "physical"
+    next
+end
+''',
+        )
+        headers, rows = self._rows(workbook["Interfaces"])
+        name = headers.index("Name")
+        by_name = {row[name]: row for row in rows}
+        self.assertIn("▣ orphan", by_name)
+        self.assertIn("◆ agg-missing", by_name)
+        self.assertIn("◇ cycle-a", by_name)
+        self.assertIn("└─ ◇ cycle-b", by_name)
+        self.assertTrue(by_name["◆ agg-missing"][headers.index("Topology Issues")])
+        self.assertEqual("REVIEW_REQUIRED", by_name["◇ cycle-a"][headers.index("Analysis Status")])
+        self.assertEqual("physical", by_name["└─ ◈ VPN-physical"][headers.index("Parent Interface")])
+        self.assertLess(
+            [row[name] for row in rows].index("● physical"),
+            [row[name] for row in rows].index("└─ ◈ VPN-physical"),
+        )
 
     def test_semantics_and_source_preservation(self):
         workbook = self._workbook()
@@ -270,6 +325,24 @@ class ExcelReportTest(unittest.TestCase):
         self.assertTrue(rows[0][policies.index("Policy Name")].endswith("-L"))
         self.assertIsNotNone(rows[1][policies.index("Source Name")])
         self.assertIsNotNone(rows[2][policies.index("Source Name")])
+        self.assertNotEqual(
+            rows[1][policies.index("Policy Name")],
+            rows[2][policies.index("Policy Name")],
+        )
+        self.assertTrue(
+            all(
+                len(rows[index][policies.index("Policy Name")]) <= 32
+                for index in (1, 2)
+            )
+        )
+        self.assertNotIn(
+            "Normalized policy name collision",
+            rows[1][policies.index("Review Reasons")] or "",
+        )
+        self.assertNotIn(
+            "Normalized policy name collision",
+            rows[2][policies.index("Review Reasons")] or "",
+        )
         self.assertIsNone(rows[3][policies.index("Source Name")])
         self.assertEqual("pool1", rows[1][policies.index("IP Pool Name")])
         self.assertIsNone(rows[2][policies.index("SNAT Address")])
@@ -293,6 +366,185 @@ class ExcelReportTest(unittest.TestCase):
         inventory_values = [cell.value for row in workbook["Source Inventory"].iter_rows() for cell in row]
         self.assertIn("2001:db8:100::1/64", inventory_values)
         self.assertIn("preserve-me", inventory_values)
+
+    def test_analysis_status_is_scoped_by_validation_domain(self):
+        workbook = self._workbook(
+            r'''
+config system interface
+    edit "BCA_INF"
+        set ip 192.0.2.1 255.255.255.0
+    next
+end
+
+config vpn ipsec phase2-interface
+    edit "BCA_INF"
+        set src-addr-type range
+        set src-start-ip 192.0.2.10
+    next
+end
+''',
+        )
+
+        interfaces, interface_rows = self._rows(workbook["Interfaces"])
+        interface = next(row for row in interface_rows if row[interfaces.index("Name")] == "● BCA_INF")
+        self.assertEqual("EXTRACTED", interface[interfaces.index("Analysis Status")])
+        self.assertFalse(interface[interfaces.index("Review Reasons")])
+
+        phase2, phase2_rows = self._rows(workbook["VPN Phase 2"])
+        phase2_row = next(row for row in phase2_rows if row[phase2.index("Name")] == "BCA_INF")
+        self.assertEqual("REVIEW_REQUIRED", phase2_row[phase2.index("Analysis Status")])
+        self.assertIn("Selector has only one range endpoint.", phase2_row[phase2.index("Review Reasons")])
+
+    def test_reference_namespace_regression(self):
+        workbook = self._workbook(
+            r'''
+config system interface
+    edit "wan1"
+    next
+    edit "INFUAT-BIBDUAT"
+        set snmp-index 34
+    next
+    edit "INFUAT-BIBDUAT"
+        set snmp-index 11
+    next
+end
+
+config firewall address
+    edit "all"
+        set subnet 0.0.0.0 0.0.0.0
+    next
+end
+
+config firewall address6
+    edit "all"
+        set ip6 2001:db8::/64
+    next
+end
+
+config vpn ipsec phase1-interface
+    edit "Euronet-P1"
+        set interface "wan1"
+    next
+end
+
+config firewall policy
+    edit 2257
+        set name "Euronet policy"
+        set srcintf "Euronet-P1"
+        set srcaddr "all"
+        set srcaddr6 "all"
+    next
+end
+''',
+        )
+
+        review, review_rows = self._rows(workbook["Review Required"])
+        review_text = [
+            " ".join(str(value) for value in row if value is not None)
+            for row in review_rows
+        ]
+        self.assertTrue(any("INFUAT-BIBDUAT" in row and "ambiguous" in row for row in review_text))
+        self.assertFalse(any("all" in row and "ambiguous" in row for row in review_text))
+        self.assertFalse(any("Euronet-P1" in row and "not found" in row for row in review_text))
+
+        addresses, address_rows = self._rows(workbook["Addresses"])
+        all_rows = [row for row in address_rows if row[addresses.index("Name")] == "all"]
+        self.assertEqual({"ipv4", "ipv6"}, {row[addresses.index("Address Family")] for row in all_rows})
+        vpn, vpn_rows = self._rows(workbook["VPN Tunnels"])
+        self.assertIn("Euronet-P1", {row[vpn.index("Name")] for row in vpn_rows})
+
+    def test_vip_analysis_status_matches_backend_validation(self):
+        workbook = self._workbook(
+            r'''
+config firewall vip
+    edit "single-backend"
+        set type server-load-balance
+        config realservers
+            edit 1
+                set ip 192.0.2.10
+            next
+        end
+    next
+    edit "zero-backend"
+        set type server-load-balance
+    next
+    edit "static-vip"
+        set type static-nat
+    next
+end
+''',
+        )
+
+        vips, rows = self._rows(workbook["Virtual IPs"])
+        by_name = {row[vips.index("Name")]: row for row in rows}
+        self.assertEqual("EXTRACTED", by_name["single-backend"][vips.index("Analysis Status")])
+        self.assertFalse(by_name["single-backend"][vips.index("Review Reasons")])
+        self.assertEqual("REVIEW_REQUIRED", by_name["zero-backend"][vips.index("Analysis Status")])
+
+        review, review_rows = self._rows(workbook["Review Required"])
+        zero_backend_review = next(
+            row for row in review_rows
+            if row[review.index("Object")] == "zero-backend"
+        )
+        self.assertIn("no configured real-server backend", zero_backend_review[review.index("Issue / Review Reason")])
+
+    def test_malformed_nat_warning_reaches_nat_and_review_sheets(self):
+        source = "source static any any destination static " + "103.230.127.102 " * 40
+        workbook = self._workbook(
+            f'''
+config system interface
+    edit "wan1"
+        set ip {source}
+    next
+end
+
+config firewall policy
+    edit 1
+        set name "bad nat"
+        set dstintf "wan1"
+        set nat enable
+    next
+end
+'''
+        )
+
+        nat, nat_rows = self._rows(workbook["NAT Rules"])
+        nat_row = nat_rows[0]
+        self.assertIn("explicit 'ip' value that could not be parsed", nat_row[nat.index("Review Reasons")])
+        self.assertNotIn(source, nat_row[nat.index("Review Reasons")])
+
+        review, review_rows = self._rows(workbook["Review Required"])
+        review_row = next(row for row in review_rows if row[review.index("Category")] == "nat")
+        self.assertEqual("warning", review_row[review.index("Severity")])
+        self.assertEqual(nat_row[nat.index("Review Reasons")], review_row[review.index("Issue / Review Reason")])
+
+    def test_any_nat_warning_reaches_nat_and_review_sheets(self):
+        workbook = self._workbook(
+            r'''
+config firewall policy
+    edit 1
+        set name "any egress nat"
+        set dstintf "any"
+        set nat enable
+    next
+end
+''',
+        )
+
+        expected = (
+            "Outgoing interface 'any' is non-specific; interface-address "
+            "SNAT depends on the runtime egress path and cannot be derived "
+            "deterministically."
+        )
+        nat, nat_rows = self._rows(workbook["NAT Rules"])
+        nat_row = nat_rows[0]
+        self.assertEqual("REVIEW_REQUIRED", nat_row[nat.index("Analysis Status")])
+        self.assertIn(expected, nat_row[nat.index("Review Reasons")])
+
+        review, review_rows = self._rows(workbook["Review Required"])
+        review_row = next(row for row in review_rows if row[review.index("Category")] == "nat")
+        self.assertEqual("warning", review_row[review.index("Severity")])
+        self.assertIn(expected, review_row[review.index("Issue / Review Reason")])
 
     def test_presentation_and_review_contract(self):
         workbook = self._workbook()

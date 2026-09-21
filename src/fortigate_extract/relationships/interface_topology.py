@@ -351,7 +351,7 @@ def _resolve_physical_interfaces(
             issues,
         )
 
-    # VLAN / tunnel / logical child.
+    # VLAN / logical child.
     if interface.interface:
         parent = references.get(
             ReferenceKind.INTERFACE,
@@ -376,7 +376,7 @@ def _resolve_physical_interfaces(
         )
 
     # Terminal interface.
-    if _is_logical_without_parent(
+    if _requires_resolvable_parent(
         interface
     ):
         return (
@@ -385,6 +385,12 @@ def _resolve_physical_interfaces(
                 "Logical interface has no resolvable "
                 "physical parent."
             ],
+        )
+
+    if _is_logical_without_parent(interface):
+        return (
+            [],
+            [],
         )
 
     return (
@@ -444,6 +450,16 @@ def _interface_kind(
     return "physical"
 
 
+def _requires_resolvable_parent(
+    interface: FGInterface,
+) -> bool:
+    interface_type = (
+        interface.type or ""
+    ).lower()
+
+    return interface_type == "vlan"
+
+
 def _is_logical_without_parent(
     interface: FGInterface,
 ) -> bool:
@@ -456,9 +472,6 @@ def _is_logical_without_parent(
         "tunnel",
         "ipsec",
         "gre",
-        "vlan",
-        "aggregate",
-        "redundant",
         "vdom-link",
     }
 

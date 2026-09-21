@@ -1,18 +1,70 @@
 import unittest
 
 from fortigate_extract.derived import build_derived_views
+from fortigate_extract.model.external_resource import FGExternalResource
 from fortigate_extract.model.interface import FGInterface
 from fortigate_extract.model.policy import FGPolicy
 from fortigate_extract.model.service import FGService
 from fortigate_extract.model.source import FGConfig
 from fortigate_extract.model.vip import FGVIP, FGVIPRealServer
+from fortigate_extract.model.vpn import FGIPsecPhase2
 from fortigate_extract.transform.nat import transform_nat
+from fortigate_extract.transform.vpn import normalize_vpn_phase2
 from fortigate_extract.transform.services import transform_services
-from fortigate_extract.validation.models import ValidationSeverity
 from fortigate_extract.validation.validator import validate_config
 
 
 class Phase2SemanticTest(unittest.TestCase):
+    def test_ip_selector_is_a_single_host(self):
+        result = normalize_vpn_phase2(
+            FGConfig(
+                ipsec_phase2=[
+                    FGIPsecPhase2(
+                        name="single-host",
+                        src_addr_type="ip",
+                        src_start_ip="192.168.167.71",
+                        dst_addr_type="ip",
+                        dst_start_ip="192.168.99.35",
+                    )
+                ]
+            )
+        )
+
+        self.assertEqual(result.issues, [])
+        self.assertEqual(result.phase2[0].source_range, "192.168.167.71-192.168.167.71")
+        self.assertEqual(result.phase2[0].destination_range, "192.168.99.35-192.168.99.35")
+
+    def test_range_selector_still_requires_two_endpoints(self):
+        result = normalize_vpn_phase2(
+            FGConfig(
+                ipsec_phase2=[
+                    FGIPsecPhase2(
+                        name="incomplete-range",
+                        src_addr_type="range",
+                        src_start_ip="192.0.2.1",
+                    )
+                ]
+            )
+        )
+
+        self.assertEqual(result.phase2[0].source_range, None)
+        self.assertEqual(result.issues[0].message, "Selector has only one range endpoint.")
+
+    def test_missing_selector_type_keeps_conservative_range_behavior(self):
+        result = normalize_vpn_phase2(
+            FGConfig(
+                ipsec_phase2=[
+                    FGIPsecPhase2(
+                        name="unknown-selector",
+                        src_start_ip="192.0.2.1",
+                    )
+                ]
+            )
+        )
+
+        self.assertEqual(result.phase2[0].source_range, None)
+        self.assertEqual(result.issues[0].message, "Selector has only one range endpoint.")
+
     def test_service_generated_state_is_explicit(self):
         result = transform_services(
             FGConfig(
@@ -67,7 +119,60 @@ class Phase2SemanticTest(unittest.TestCase):
         self.assertEqual(len(derived.broken_references), 1)
         self.assertEqual(derived.broken_references[0].reference, "missing")
 
-    def test_load_balancing_vip_requires_two_usable_backends(self):
+    def test_external_address_resolves_policy_addresses(self):
+        config = FGConfig(
+            external_resources=[
+                FGExternalResource(name="torip", type="address")
+            ],
+            policies=[
+                FGPolicy(
+                    policy_id=1470,
+                    name="in168blacklist",
+                    srcaddr=["torip"],
+                    dstaddr=["torip"],
+                )
+            ],
+        )
+
+        derived = build_derived_views(config)
+        validation = validate_config(config, derived=derived)
+
+        self.assertFalse(derived.broken_references)
+        self.assertFalse(
+            any(issue.field in {"srcaddr", "dstaddr"} for issue in validation.issues)
+        )
+
+    def test_non_address_external_resource_does_not_resolve(self):
+        derived = build_derived_views(
+            FGConfig(
+                external_resources=[
+                    FGExternalResource(name="torip", type="domain")
+                ],
+                policies=[FGPolicy(srcaddr=["torip"])],
+            )
+        )
+
+        self.assertEqual(
+            [broken.reference for broken in derived.broken_references],
+            ["torip"],
+        )
+
+    def test_external_address_reference_is_vdom_scoped(self):
+        derived = build_derived_views(
+            FGConfig(
+                external_resources=[
+                    FGExternalResource(name="torip", type="address", vdom="vdom-a")
+                ],
+                policies=[FGPolicy(vdom="root", srcaddr=["torip"])],
+            )
+        )
+
+        self.assertEqual(
+            [broken.reference for broken in derived.broken_references],
+            ["torip"],
+        )
+
+    def test_load_balancing_vip_with_one_usable_backend_is_valid(self):
         result = validate_config(
             FGConfig(
                 vips=[
@@ -80,12 +185,8 @@ class Phase2SemanticTest(unittest.TestCase):
             )
         )
 
-        self.assertTrue(
-            any(
-                issue.domain == "vip"
-                and issue.severity == ValidationSeverity.WARNING
-                for issue in result.issues
-            )
+        self.assertFalse(
+            any(issue.domain == "vip" for issue in result.issues)
         )
 
 

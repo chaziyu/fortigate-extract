@@ -45,86 +45,6 @@ _SOURCE_PATHS_BY_SHEET: dict[str, tuple[str, ...]] = {
     "System Settings": ("system global", "system settings"),
     "DNS Settings": ("system dns",),
     "NTP Settings": ("system ntp", "system ntp ntpserver"),
-    "Schedules": ("firewall schedule onetime", "firewall schedule recurring"),
-    "Schedule Groups": ("firewall schedule group",),
-    "Local-In Policies": ("firewall local-in-policy", "firewall local-in-policy6"),
-    "Multicast Policies": ("firewall multicast-policy", "firewall multicast-policy6"),
-    "Policy Routes": ("router policy", "router policy6"),
-    "Session TTL Settings": ("system session-ttl",),
-    "Session TTL Overrides": ("system session-ttl port",),
-    "SD-WAN SLAs": ("system sdwan health-check sla",),
-    "SD-WAN Duplication": ("system sdwan duplication",),
-    "SD-WAN Neighbors": ("system sdwan neighbor",),
-    "SD-WAN Rule SLAs": ("system sdwan service sla",),
-    "Routing Protocol Settings": (
-        "router bgp",
-        "router ospf",
-        "router ospf6",
-        "router rip",
-        "router ripng",
-        "router isis",
-    ),
-    "SSL VPN Portal Split DNS": ("vpn ssl web portal split-dns",),
-    "SSL VPN Portal MAC Rules": ("vpn ssl web portal mac-addr-check-rule",),
-    "SSL VPN Portal OS Checks": ("vpn ssl web portal os-check-list",),
-    "SSL VPN Bookmark Groups": ("vpn ssl web portal bookmark-group",),
-    "SSL VPN Bookmarks": ("vpn ssl web portal bookmark-group bookmarks",),
-    "SSL VPN Bookmark Form Data": (
-        "vpn ssl web portal bookmark-group bookmarks form-data",
-    ),
-    "SSL VPN Landing Pages": ("vpn ssl web portal landing-page",),
-    "SSL VPN Landing Form Data": ("vpn ssl web portal landing-page form-data",),
-    "LDAP Servers": ("user ldap",),
-    "RADIUS Servers": ("user radius",),
-    "RADIUS Accounting Servers": ("user radius accounting-server",),
-    "TACACS+ Servers": ("user tacacs+",),
-    "SAML Servers": ("user saml",),
-    "FSSO Servers": ("user fsso",),
-    "FSSO AD Groups": ("user adgrp",),
-    "FSSO Polling": ("user fsso-polling",),
-    "FortiTokens": ("user fortitoken",),
-    "Authentication Schemes": ("authentication scheme",),
-    "Authentication Rules": ("authentication rule",),
-    "Authentication Sequences": ("authentication setting",),
-    "Identity Server Endpoints": ("user security-exempt-list",),
-    "SSL TLS Service Profiles": ("firewall ssl-server",),
-    "Internet Service Definitions": ("firewall internet-service-definition",),
-    "Internet Service Def Entries": ("firewall internet-service-definition entry",),
-    "Internet Service Def Ports": (
-        "firewall internet-service-definition entry port-range",
-    ),
-    "Custom Internet Services": ("firewall internet-service-custom",),
-    "Custom IS Entries": ("firewall internet-service-custom entry",),
-    "Custom IS Ports": ("firewall internet-service-custom entry port-range",),
-    "Custom Internet Service Groups": ("firewall internet-service-custom-group",),
-    "Internet Service Groups": ("firewall internet-service-group",),
-    "IS Additions": ("firewall internet-service-addition",),
-    "IS Addition Entries": ("firewall internet-service-addition entry",),
-    "IS Addition Ports": ("firewall internet-service-addition entry port-range",),
-    "IS Appends": ("firewall internet-service-append",),
-    "IS Extensions": ("firewall internet-service-extension",),
-    "IS Extension Disabled": ("firewall internet-service-extension disable-entry",),
-    "IS Extension Entries": ("firewall internet-service-extension entry",),
-    "IS Extension Ports": (
-        "firewall internet-service-extension entry port-range",
-        "firewall internet-service-extension disable-entry port-range",
-    ),
-    "Source Security Profile Setting": (
-        "antivirus profile",
-        "application list",
-        "webfilter profile",
-        "dnsfilter profile",
-        "emailfilter profile",
-        "firewall ssl-ssh-profile",
-        "file-filter profile",
-    ),
-    "DoS Policies": ("firewall DoS-policy", "firewall DoS-policy6"),
-    "DoS Anomalies": (
-        "firewall DoS-policy anomaly",
-        "firewall DoS-policy6 anomaly",
-    ),
-    "Firewall Sniffer": ("firewall sniffer",),
-    "IPv6 EH Filter": ("firewall ipv6-eh-filter",),
 }
 
 _SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -135,21 +55,8 @@ _SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "Addressing Mode": ("mode",),
     "Management Access": ("allowaccess",),
     "VLAN ID": ("vlanid",),
-    "Parent / Underlay Interface": ("interface",),
     "Members": ("member", "members"),
     "Description": ("description", "comment", "comments"),
-    "PPPoE Username": ("username", "pppoe-username"),
-    "IPv6 Address": ("ip6-address", "ipv6.ip6-address"),
-    "IPv6 Management Access": (
-        "ip6-allowaccess",
-        "ipv6.ip6-allowaccess",
-    ),
-    "IPv6 Mode": ("ip6-mode", "ipv6.ip6-mode"),
-    "MTU": ("mtu",),
-    "Link State": ("status",),
-    "Speed": ("speed",),
-    "Duplex": ("duplex",),
-    "Media Type": ("mediatype", "media-type"),
     "Protocol": ("protocol",),
     "Source Port": ("src-port", "source-port"),
     "Destination Port": ("dst-port", "destination-port"),
@@ -209,31 +116,43 @@ class _ExcelContext:
         for record in extracted.source_objects:
             self.source_by_path[record.source_path].append(record)
 
-        self.issues_by_object: dict[tuple[str, str], list[ValidationIssue]] = defaultdict(list)
+        self.issues_by_object: dict[tuple[str, str, str], list[ValidationIssue]] = defaultdict(list)
 
         for issue in validation.issues:
             if issue.object_name:
-                self.issues_by_object[(issue.vdom, str(issue.object_name))].append(issue)
+                self.issues_by_object[(issue.domain, issue.vdom, str(issue.object_name))].append(issue)
 
     def issues_for(
         self,
         *,
         vdom: str,
         names: Iterable[Any],
+        domains: Iterable[str] | None = None,
     ) -> list[ValidationIssue]:
         found: list[ValidationIssue] = []
         seen: set[tuple[str, str, str]] = set()
+        allowed_domains = set(domains) if domains is not None else None
 
         for name in names:
             if name in (None, ""):
                 continue
 
-            for issue in self.issues_by_object.get((vdom, str(name)), ()):
-                key = (issue.domain, issue.field or "", issue.message)
-                if key in seen:
-                    continue
-                seen.add(key)
-                found.append(issue)
+            issue_domains = (
+                allowed_domains
+                if allowed_domains is not None
+                else {
+                    domain
+                    for domain, issue_vdom, issue_name in self.issues_by_object
+                    if issue_vdom == vdom and issue_name == str(name)
+                }
+            )
+            for domain in issue_domains:
+                for issue in self.issues_by_object.get((domain, vdom, str(name)), ()):
+                    key = (issue.domain, issue.field or "", issue.message)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    found.append(issue)
 
         return found
 
@@ -693,16 +612,80 @@ def _review_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[st
 
 def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
     topology = {(item.vdom, item.name): item for item in context.derived.topology.interfaces}
+    interfaces = {(item.vdom, item.name): item for item in context.config.interfaces}
+    aggregate_members: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    children: dict[tuple[str, str], list[tuple[str, str]]] = defaultdict(list)
+    owned: set[tuple[str, str]] = set()
+    for interface in context.config.interfaces:
+        key = (interface.vdom, interface.name)
+        if interface.interface and (interface.vdom, interface.interface) in interfaces:
+            children[(interface.vdom, interface.interface)].append(key)
+        for member in interface.members:
+            member_key = (interface.vdom, member)
+            aggregate_members[key].append(member_key)
+            owned.add(member_key)
+
+    vpns_by_interface: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    vpns = {(item.vdom, item.name): item for item in context.config.ipsec_phase1}
+    for vpn in context.derived.topology.vpns:
+        if vpn.attached_interface:
+            vpns_by_interface[(vpn.vdom, vpn.attached_interface)].append(vpn)
+
+    def rank(key: tuple[str, str]) -> tuple[int, str]:
+        return _interface_rank(topology.get(key), interfaces[key])
+
+    roots = sorted(
+        (key for key in interfaces if key not in owned and not interfaces[key].interface),
+        key=rank,
+    )
     zones_by_interface: dict[tuple[str, str], list[str]] = defaultdict(list)
     for zone in context.config.zones:
         for member in zone.members:
             zones_by_interface[(zone.vdom, member)].append(zone.name)
     rows: list[dict[str, Any]] = []
-    for interface in context.config.interfaces:
+    visited: set[tuple[str, str]] = set()
+    emitted_vpns: set[tuple[str, str]] = set()
+
+    def emit_vpn(vpn_top: Any, prefix: str = "") -> None:
+        vpn_key = (vpn_top.vdom, vpn_top.name)
+        if vpn_key in emitted_vpns:
+            return
+        emitted_vpns.add(vpn_key)
+        vpn = vpns.get(vpn_key)
+        if vpn is None:
+            return
+        row = {
+            "Name": f"{prefix}{_topology_symbol('vpn')} {vpn.name}",
+            "Type": vpn.type,
+            "Parent Interface": vpn_top.attached_interface,
+            "Aggregate": vpn_top.aggregate,
+            "Physical Interfaces": list(vpn_top.physical_interfaces),
+            "Topology Path": list(vpn_top.path),
+            "VDOM": vpn.vdom,
+            "Topology Issues": list(vpn_top.issues),
+            "Source Explicit Fields": sorted(vpn.explicit_fields),
+            "Additional Settings": sanitize_source_attributes(vpn.raw_extra),
+        }
+        _add_analysis_status(
+            row,
+            context,
+            vdom=vpn.vdom,
+            names=(vpn.name,),
+            domains=("ipsec_phase1", "vpn_topology"),
+            extra_reasons=vpn_top.issues,
+        )
+        _overlay_raw(row, vpn.raw_extra, headers)
+        rows.append(row)
+
+    def emit_interface(key: tuple[str, str], prefix: str = "", child_indent: str = "") -> None:
+        if key in visited:
+            return
+        visited.add(key)
+        interface = interfaces[key]
         key = (interface.vdom, interface.name)
         top = topology.get(key)
         row = {
-            "Name": interface.name,
+            "Name": f"{prefix}{_topology_symbol(top.kind if top else None)} {interface.name}",
             "Alias": interface.alias,
             "Zone": zones_by_interface.get(key, []),
             "IP / Prefix": interface.ip,
@@ -729,6 +712,7 @@ def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
             context,
             vdom=interface.vdom,
             names=(interface.name,),
+            domains=("interface", "interface_topology"),
         )
         source_values = _interface_source_values(
             context,
@@ -746,7 +730,43 @@ def _interface_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict
         )
         rows.append(row)
 
+        child_keys = tuple(aggregate_members.get(key, ())) + tuple(children.get(key, ()))
+        child_keys = tuple(sorted((item for item in dict.fromkeys(child_keys) if item in interfaces), key=rank))
+        vpn_children = tuple(vpns_by_interface.get(key, ()))
+        children_count = len(child_keys) + len(vpn_children)
+        child_number = 0
+        for child_key in child_keys:
+            child_number += 1
+            last = child_number == children_count
+            emit_interface(child_key, child_indent + ("└─ " if last else "├─ "), child_indent + ("   " if last else "│  "))
+        for vpn_top in vpn_children:
+            child_number += 1
+            last = child_number == children_count
+            emit_vpn(vpn_top, child_indent + ("└─ " if last else "├─ "))
+
+    for key in roots:
+        emit_interface(key)
+    for key in sorted(interfaces, key=rank):
+        emit_interface(key)
+    for vpn_top in context.derived.topology.vpns:
+        if (vpn_top.vdom, vpn_top.name) not in emitted_vpns:
+            emit_vpn(vpn_top)
+
     return rows
+
+
+def _interface_rank(topology: Any, interface: Any) -> tuple[int, str]:
+    return (
+        {"aggregate": 0, "physical": 1, "vlan": 2, "logical": 3, "tunnel": 4}.get(
+            topology.kind if topology else None,
+            5,
+        ),
+        interface.name,
+    )
+
+
+def _topology_symbol(kind: str | None) -> str:
+    return {"aggregate": "◆", "physical": "●", "vlan": "▣", "logical": "◇", "tunnel": "◇", "vpn": "◈"}.get(kind, "◇")
 
 
 def _interface_secondary_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[str, Any]]:
@@ -811,7 +831,13 @@ def _address_rows(context: _ExcelContext, headers: Sequence[str]) -> list[dict[s
             "VDOM": item.vdom,
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
-        _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
+        _add_analysis_status(
+            row,
+            context,
+            vdom=item.vdom,
+            names=(item.name,),
+            domains=("address6",) if item.address_family == "ipv6" else ("address",),
+        )
         _overlay_raw(row, item.raw_extra, headers)
         rows.append(row)
     return rows
@@ -838,7 +864,7 @@ def _address_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
         row = {
             "Name": item.name,
             "Members": item.members,
-            "Address Family": _address_group_family(item.raw_extra),
+            "Address Family": item.address_family,
             "Exclusion Enabled": item.exclude,
             "Exclude Members": item.exclude_members,
             "Description": item.comment,
@@ -848,7 +874,15 @@ def _address_group_rows(context: _ExcelContext, headers: Sequence[str]) -> list[
             "VDOM": item.vdom,
             "Additional Settings": sanitize_source_attributes(item.raw_extra),
         }
-        _add_analysis_status(row, context, vdom=item.vdom, names=(item.name,))
+        _add_analysis_status(
+            row,
+            context,
+            vdom=item.vdom,
+            names=(item.name,),
+            domains=("address_group6",)
+            if item.address_family == "ipv6"
+            else ("address_group",),
+        )
         _overlay_raw(row, item.raw_extra, headers)
         rows.append(row)
     return rows
@@ -861,7 +895,7 @@ def _address_group_tag_rows(context: _ExcelContext, headers: Sequence[str]) -> l
             rows.append(
                 {
                     "Group Name": group.name,
-                    "Address Family": _address_group_family(group.raw_extra),
+                    "Address Family": group.address_family,
                     "Tag Entry": tag.name,
                     "Category": tag.category,
                     "Tags": tag.tags,
@@ -1291,6 +1325,7 @@ def _vpn_phase1_rows(
             context,
             vdom=item.vdom,
             names=(item.name,),
+            domains=("ipsec_phase1", "vpn_topology"),
             extra_reasons=(
                 top.issues
                 if top
@@ -1357,6 +1392,7 @@ def _vpn_phase2_rows(
             context,
             vdom=item.vdom,
             names=(item.name,),
+            domains=("vpn_phase2",),
         )
 
         _overlay_raw(
@@ -2376,9 +2412,10 @@ def _add_analysis_status(
     *,
     vdom: str,
     names: Iterable[Any],
+    domains: Iterable[str] | None = None,
     extra_reasons: Iterable[str] = (),
 ) -> None:
-    issues = context.issues_for(vdom=vdom, names=names)
+    issues = context.issues_for(vdom=vdom, names=names, domains=domains)
     reasons = [issue.message for issue in issues]
     reasons.extend(str(reason) for reason in extra_reasons if reason)
     reasons = list(dict.fromkeys(reasons))
@@ -2582,13 +2619,6 @@ def _additional_source_settings(
     }
 
 
-def _address_group_family(raw_extra: Mapping[str, Any]) -> str | None:
-    source_section = str(raw_extra.get("source_section") or "")
-    if "addrgrp6" in source_section:
-        return "ipv6"
-    return None
-
-
 def _source_category(path: str) -> str:
     parts = path.split()
     return " ".join(parts[:2]) if len(parts) >= 2 else path
@@ -2600,7 +2630,9 @@ def _sheet_for_domain(domain: str) -> str:
         "interface_topology": "Interfaces",
         "zone": "Zones",
         "address": "Addresses",
+        "address6": "Addresses",
         "address_group": "Address Groups",
+        "address_group6": "Address Groups",
         "service": "Services",
         "service_group": "Service Groups",
         "policy": "Policies",

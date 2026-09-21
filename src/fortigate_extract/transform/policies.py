@@ -100,27 +100,56 @@ def normalize_policy_names(
             )
         )
 
-    return [
-        NormalizedPolicyName(
-            vdom=item.vdom,
-            policy_id=item.policy_id,
-            source_name=item.source_name,
-            normalized_name=(
-                item.normalized_name
-            ),
-            truncated=item.truncated,
-            collision=(
-                item.normalized_name
-                is not None
-                and counts.get(
-                    (
-                        item.vdom,
-                        item.normalized_name,
-                    ),
-                    0,
-                )
-                > 1
-            ),
+    reserved_names: set[tuple[str, str]] = set()
+    for item in provisional:
+        if (
+            item.normalized_name is not None
+            and counts.get(
+                (item.vdom, item.normalized_name),
+                0,
+            ) == 1
+        ):
+            reserved_names.add(
+                (item.vdom, item.normalized_name)
+            )
+
+    resolved: list[NormalizedPolicyName] = []
+    for item in provisional:
+        collision = (
+            item.normalized_name is not None
+            and counts.get(
+                (item.vdom, item.normalized_name),
+                0,
+            ) > 1
         )
-        for item in provisional
-    ]
+        normalized_name = item.normalized_name
+
+        if collision and item.truncated:
+            if (
+                item.policy_id is not None
+                and item.source_name is not None
+            ):
+                suffix = f"-L{item.policy_id}"
+                if len(suffix) <= max_length:
+                    candidate = (
+                        item.source_name[: max_length - len(suffix)]
+                        + suffix
+                    )
+                    key = (item.vdom, candidate)
+                    if key not in reserved_names:
+                        normalized_name = candidate
+                        collision = False
+                        reserved_names.add(key)
+
+        resolved.append(
+            NormalizedPolicyName(
+                vdom=item.vdom,
+                policy_id=item.policy_id,
+                source_name=item.source_name,
+                normalized_name=normalized_name,
+                truncated=item.truncated,
+                collision=collision,
+            )
+        )
+
+    return resolved

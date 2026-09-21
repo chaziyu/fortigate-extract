@@ -44,6 +44,12 @@ class NormalizedSourceNAT:
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class _InterfaceAddressResult:
+    address: str | None
+    issue: str | None
+
+
 def transform_nat(
     config: FGConfig,
     *,
@@ -191,8 +197,9 @@ def _interface_nat(
 
         if resolution.predefined:
             issues.append(
-                "Outgoing interface is dynamic/"
-                f"non-specific: {name!r}."
+                f"Outgoing interface {name!r} is non-specific; "
+                "interface-address SNAT depends on the runtime "
+                "egress path and cannot be derived deterministically."
             )
             continue
 
@@ -249,19 +256,17 @@ def _interface_nat(
             )
             continue
 
-        address = _interface_address(
+        resolution = _interface_address(
             interface
         )
 
-        if address is None:
-            issues.append(
-                "Outgoing interface "
-                f"{interface.name!r} has no "
-                "deterministic static IPv4 address."
-            )
+        if resolution.issue is not None:
+            issues.append(resolution.issue)
+
+        if resolution.address is None:
             continue
 
-        addresses.append(address)
+        addresses.append(resolution.address)
 
     if len(interface_names) > 1:
         issues.append(
@@ -294,12 +299,7 @@ def _interface_nat(
 
 def _interface_address(
     interface: FGInterface,
-) -> str | None:
-    if not interface.ip:
-        return None
-
-    # Dynamic interfaces do not have a stable
-    # configured translation address.
+) -> _InterfaceAddressResult:
     if (
         interface.mode
         and interface.mode.lower()
@@ -308,12 +308,26 @@ def _interface_address(
             "pppoe",
         }
     ):
-        return None
+        return _InterfaceAddressResult(
+            address=None,
+            issue=(
+                f"Outgoing interface {interface.name!r} uses "
+                f"dynamic addressing mode {interface.mode.lower()!r}; "
+                "interface-address SNAT is runtime-dependent."
+            ),
+        )
+
+    if not interface.ip or not interface.ip.strip():
+        return _InterfaceAddressResult(
+            address=None,
+            issue=(
+                f"Outgoing interface {interface.name!r} has no "
+                "explicitly configured IPv4 address; "
+                "interface-address SNAT cannot be derived."
+            ),
+        )
 
     raw = interface.ip.strip()
-
-    if not raw:
-        return None
 
     # FortiGate source forms commonly include:
     #
@@ -323,16 +337,37 @@ def _interface_address(
 
     try:
         if "/" in first:
-            return str(
-                ip_interface(first).ip
+            return _InterfaceAddressResult(
+                address=str(ip_interface(first).ip),
+                issue=None,
             )
 
-        return str(
-            ip_address(first)
+        return _InterfaceAddressResult(
+            address=str(ip_address(first)),
+            issue=None,
         )
 
     except ValueError:
-        return None
+        return _InterfaceAddressResult(
+            address=None,
+            issue=(
+                f"Outgoing interface {interface.name!r} has an explicit "
+                "'ip' value that could not be parsed as a static IPv4 "
+                "address; interface-address SNAT cannot be derived. "
+                f"Source value: {_preview_source_value(raw)!r}."
+            ),
+        )
+
+
+def _preview_source_value(
+    value: str,
+    *,
+    max_length: int = 120,
+) -> str:
+    preview = " ".join(value.split())
+    if len(preview) <= max_length:
+        return preview
+    return f"{preview[:max_length - 3]}..."
 
 
 def _pool_address(
