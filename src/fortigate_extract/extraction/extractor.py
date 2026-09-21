@@ -15,6 +15,7 @@ from .policies import extract_policies
 from .profiles_group import extract_profile_groups
 from .result import ExtractionResult
 from .source_inventory import capture_source_objects
+from .source_metadata import capture_source_metadata
 from .routing import extract_routes
 from .sdwan import extract_sdwan
 from .services import extract_services
@@ -79,4 +80,5 @@ def extract_fortigate_config(
     return ExtractionResult(
         config=source,
         source_objects=capture_source_objects(tree),
+        source_metadata=capture_source_metadata(tree),
     )

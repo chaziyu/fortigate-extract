@@ -235,6 +235,84 @@ class ExcelReportTest(unittest.TestCase):
                 sheet_name,
             )
 
+    def test_ntp_config_settings_are_separate_from_servers(self):
+        workbook = self._workbook(
+            """
+            config system ntp
+                set ntpsync enable
+                set server-mode enable
+                set interface "port1" "port4"
+            end
+            """
+        )
+
+        settings_headers, settings_rows = self._rows(workbook["NTP Settings"])
+        self.assertNotIn("Object", settings_headers)
+        self.assertEqual(
+            {row[settings_headers.index("Setting")] for row in settings_rows},
+            {"ntpsync", "server_mode", "interface"},
+        )
+        server_headers, server_rows = self._rows(workbook["NTP Servers"])
+        self.assertEqual(server_rows, [])
+        self.assertEqual(
+            list(SHEET_HEADERS["NTP Servers"]),
+            server_headers,
+        )
+
+    def test_ntp_server_objects_use_server_ids(self):
+        workbook = self._workbook(
+            """
+            config system ntp
+                config ntpserver
+                    edit 1
+                        set server "192.0.2.10"
+                    next
+                    edit 2
+                        set server "192.0.2.20"
+                    next
+                end
+            end
+            """
+        )
+
+        headers, rows = self._rows(workbook["NTP Servers"])
+        server_id = headers.index("Server ID")
+        setting = headers.index("Setting")
+        value = headers.index("Value")
+        source_path = headers.index("Source Path")
+        self.assertEqual(
+            {(row[server_id], row[setting], row[value], row[source_path]) for row in rows},
+            {
+                ("1", "server", "192.0.2.10", "system ntp ntpserver"),
+                ("2", "server", "192.0.2.20", "system ntp ntpserver"),
+            },
+        )
+
+    def test_ntp_settings_and_servers_do_not_duplicate_rows(self):
+        workbook = self._workbook(
+            """
+            config system ntp
+                set ntpsync enable
+                config ntpserver
+                    edit 1
+                        set server "192.0.2.10"
+                    next
+                end
+            end
+            """
+        )
+
+        settings_headers, settings_rows = self._rows(workbook["NTP Settings"])
+        server_headers, server_rows = self._rows(workbook["NTP Servers"])
+        self.assertEqual(
+            [(row[settings_headers.index("Setting")], row[settings_headers.index("Value")]) for row in settings_rows],
+            [("ntpsync", "enable")],
+        )
+        self.assertEqual(
+            [(row[server_headers.index("Setting")], row[server_headers.index("Value")]) for row in server_rows],
+            [("server", "192.0.2.10")],
+        )
+
     def test_source_and_topology_contract(self):
         workbook = self._workbook()
         interfaces, rows = self._rows(workbook["Interfaces"])
@@ -268,6 +346,23 @@ class ExcelReportTest(unittest.TestCase):
         summary_values = {summary.cell(row, 1).value: summary.cell(row, 2).value for row in range(1, summary.max_row + 1)}
         self.assertEqual("FG-TEST", summary_values["Hostname"])
         self.assertEqual("Yes", summary_values["IPv6 Explicit Configuration Present"])
+        extracted = extract_fortigate_config(
+            parse_fortigate_config(_SAMPLE_CONFIG),
+            config=ExtractionConfig(),
+        )
+        self.assertEqual(
+            len(extracted.config.interfaces),
+            summary_values["Source Interfaces"],
+        )
+        self.assertNotIn("Interfaces", summary_values)
+        source_interfaces_row = next(
+            row for row in range(1, summary.max_row + 1)
+            if summary.cell(row, 1).value == "Source Interfaces"
+        )
+        self.assertEqual(
+            "#'Interfaces'!A1",
+            summary.cell(source_interfaces_row, 3).hyperlink.target,
+        )
 
     def test_topology_edge_rows_remain_visible(self):
         workbook = self._workbook(
@@ -608,8 +703,7 @@ end
         self.assertEqual(nat_row[nat.index("Review Reasons")], review_row[review.index("Issue / Review Reason")])
 
     def test_any_nat_warning_reaches_nat_and_review_sheets(self):
-        workbook = self._workbook(
-            r'''
+        source = r'''
 config firewall policy
     edit 1
         set name "any egress nat"
@@ -617,7 +711,9 @@ config firewall policy
         set nat enable
     next
 end
-''',
+'''
+        workbook = self._workbook(
+            source,
         )
 
         expected = (
@@ -634,6 +730,37 @@ end
         review_row = next(row for row in review_rows if row[review.index("Category")] == "nat")
         self.assertEqual("warning", review_row[review.index("Severity")])
         self.assertIn(expected, review_row[review.index("Issue / Review Reason")])
+
+        extracted = extract_fortigate_config(
+            parse_fortigate_config(source),
+            config=ExtractionConfig(),
+        )
+        derived = build_derived_views(extracted.config)
+        validation = validate_config(extracted.config, derived=derived)
+        summary = workbook["Summary"]
+        summary_values = {
+            summary.cell(row, 1).value: summary.cell(row, 2).value
+            for row in range(1, summary.max_row + 1)
+        }
+        self.assertEqual(
+            sum(issue.domain == "nat" for issue in validation.issues),
+            summary_values["NAT Review Items"],
+        )
+        self.assertNotIn("Interface-NAT Ambiguities", summary_values)
+
+    def test_summary_uses_explicit_fortios_version_header(self):
+        workbook = self._workbook(
+            "#config-version=FG100E-7.2.13-FW-build1762-260128:opmode=0:vdom=0\n"
+        )
+        summary = workbook["Summary"]
+        summary_values = {
+            summary.cell(row, 1).value: summary.cell(row, 2).value
+            for row in range(1, summary.max_row + 1)
+        }
+        self.assertEqual("7.2.13", summary_values["FortiOS Version"])
+
+        workbook = self._workbook("# no config version\n")
+        self.assertIsNone(workbook["Summary"]["B5"].value)
 
     def test_presentation_and_review_contract(self):
         workbook = self._workbook()

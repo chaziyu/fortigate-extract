@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#172321" />
     <meta
       name="description"
-      content="Extract a FortiGate CLI configuration into a reviewable Excel workbook."
+      content="Review a FortiGate CLI configuration and export it to Excel."
     />
-    <title>FortiGate Excel Report</title>
+    <title>FortiGate Configuration Report</title>
     <link
       rel="icon"
       type="image/svg+xml"
@@ -47,22 +47,31 @@
     <a class="skip-link" href="#main-content">Skip to workspace</a>
 
     <aside class="sidebar" aria-label="Workspace navigation">
-      <a class="brand" href="/" aria-label="FortiGate Excel Report home">
+      <a class="brand" href="/" aria-label="FortiGate Configuration Report home">
         <span class="brand-mark">{{ icon('table') }}</span>
         <span class="brand-wordmark">
-          FortiGate<span>EXCEL REPORT</span>
+          FortiGate<span>CONFIG REPORT</span>
         </span>
       </a>
 
       <nav class="mode-tabs" aria-label="Workflow">
         <button
-          id="tab-extract"
+          id="tab-report"
           class="tab-btn active"
           type="button"
           aria-current="page"
         >
+          {{ icon('activity') }}
+          <span>View Report</span>
+          <span class="nav-active-dot"></span>
+        </button>
+        <button
+          id="tab-extract"
+          class="tab-btn"
+          type="button"
+        >
           {{ icon('table') }}
-          <span>Extract to Excel</span>
+          <span>Export to Excel</span>
           <span class="nav-active-dot"></span>
         </button>
       </nav>
@@ -74,10 +83,9 @@
         <div class="page-heading reveal">
           <div>
             <p class="eyebrow">FORTIGATE CONFIGURATION ANALYSIS</p>
-            <h1>FortiGate Excel Report</h1>
-            <p>
-              Upload a FortiGate CLI backup, review the extracted inventory,
-              then download the complete Excel workbook.
+            <h1 id="page-title">FortiGate Configuration Report</h1>
+            <p id="page-description">
+              Upload a FortiGate CLI backup and review the extracted configuration.
             </p>
           </div>
           <div class="page-heading-actions">
@@ -130,6 +138,7 @@
         <div class="workspace-grid">
           <div class="workspace-main">
             {% include 'partials/source_configuration.html' %}
+            {% include 'partials/report.html' %}
             <div
               id="error-message"
               class="error-banner hidden"

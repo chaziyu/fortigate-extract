@@ -44,7 +44,6 @@ _BORDER = Border(bottom=_THIN)
 _SOURCE_PATHS_BY_SHEET: dict[str, tuple[str, ...]] = {
     "System Settings": ("system global", "system settings"),
     "DNS Settings": ("system dns",),
-    "NTP Settings": ("system ntp", "system ntp ntpserver"),
 }
 
 _SOURCE_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -248,6 +247,8 @@ def _rows_for_sheet(
         "SSL VPN Authentication Rules": _ssl_auth_rule_rows,
         "SSL VPN Host Checks": _ssl_host_check_rows,
         "SSL VPN Host Check Items": _ssl_host_check_item_rows,
+        "NTP Settings": _ntp_setting_rows,
+        "NTP Servers": _ntp_server_rows,
         "Local Users": _local_user_rows,
         "User Groups": _user_group_rows,
         "User Group Matches": _user_group_match_rows,
@@ -295,7 +296,7 @@ def _build_summary(
     metadata = [
         ("Source File", context.source_name),
         ("Hostname", _hostname(context)),
-        ("FortiOS Version", None),
+        ("FortiOS Version", context.extracted.source_metadata.fortios_version),
         ("VDOMs", "\n".join(_vdoms(context))),
         ("Generated UTC", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
         ("Validation Errors", len(context.validation.errors)),
@@ -566,7 +567,7 @@ def _inventory_counts(context: _ExcelContext) -> list[tuple[str, int, str]]:
         if record.source_path not in set(registered_sections())
     }
     return [
-        ("Interfaces", len(config.interfaces), "Interfaces"),
+        ("Source Interfaces", len(config.interfaces), "Interfaces"),
         ("Zones", len(config.zones), "Zones"),
         ("Addresses", len(config.addresses), "Addresses"),
         ("Address Groups", len(config.address_groups), "Address Groups"),
@@ -608,10 +609,9 @@ def _migration_indicators(context: _ExcelContext) -> list[tuple[str, Any]]:
             *context.derived.topology.vpns,
         )
     )
-    nat_ambiguities = sum(
-        "Multiple possible outgoing interfaces" in issue
-        for item in context.derived.nat
-        for issue in item.issues
+    nat_review_items = sum(
+        issue.domain == "nat"
+        for issue in context.validation.issues
     )
     ipv6_explicit = any(
         "ipv6" in _normalize_key(key) or "ip6" in _normalize_key(key)
@@ -626,7 +626,7 @@ def _migration_indicators(context: _ExcelContext) -> list[tuple[str, Any]]:
         ("IPv6 Explicit Configuration Present", "Yes" if ipv6_explicit else "No"),
         ("Dynamic WAN Addressing Present", "Yes" if dynamic_wan else "No"),
         ("SD-WAN Present", "Yes" if config.sdwans else "No"),
-        ("Interface-NAT Ambiguities", nat_ambiguities),
+        ("NAT Review Items", nat_review_items),
         ("Broken References", len(context.derived.broken_references)),
         ("Policy Names Truncated", sum(item.truncated for item in context.derived.policy_names)),
         ("Policy Name Collisions", sum(item.collision for item in context.derived.policy_names)),
@@ -2356,6 +2356,59 @@ def _generic_source_rows(
                 )
 
                 rows.append(row)
+
+    return rows
+
+
+def _ntp_setting_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    del headers
+    rows: list[dict[str, Any]] = []
+
+    for record in context.source_by_path.get("system ntp", ()):
+        values = sanitize_source_attributes(record.values)
+        for setting, value in values.items():
+            row = {
+                "Setting": setting,
+                "Value": value,
+                "Source Path": record.source_path,
+            }
+            _add_analysis_status(
+                row,
+                context,
+                vdom=record.vdom,
+                names=(None,),
+            )
+            rows.append(row)
+
+    return rows
+
+
+def _ntp_server_rows(
+    context: _ExcelContext,
+    headers: Sequence[str],
+) -> list[dict[str, Any]]:
+    del headers
+    rows: list[dict[str, Any]] = []
+
+    for record in context.source_by_path.get("system ntp ntpserver", ()):
+        values = sanitize_source_attributes(record.values)
+        for setting, value in values.items():
+            row = {
+                "Server ID": record.object_name,
+                "Setting": setting,
+                "Value": value,
+                "Source Path": record.source_path,
+            }
+            _add_analysis_status(
+                row,
+                context,
+                vdom=record.vdom,
+                names=(record.object_name,),
+            )
+            rows.append(row)
 
     return rows
 

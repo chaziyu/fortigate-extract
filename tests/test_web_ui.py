@@ -37,9 +37,12 @@ class WebUITest(unittest.TestCase):
         )
 
         self.assertIn(
-            "FortiGate Excel Report",
+            "FortiGate Configuration Report",
             html,
         )
+        self.assertIn('id="tab-report"', html)
+        self.assertIn('id="tab-extract"', html)
+        self.assertIn('id="report-container"', html)
         self.assertIn(
             'id="btn-extract-excel"',
             html,
@@ -113,6 +116,37 @@ class WebUITest(unittest.TestCase):
             1,
             data["objects"]["interfaces"],
         )
+
+    def test_report_accepts_fortigate_upload(self):
+        response = self.client.post(
+            "/api/report",
+            data={"file": (io.BytesIO(_SAMPLE_CONFIG), "sample.conf")},
+            content_type="multipart/form-data",
+        )
+
+        self.assertEqual(200, response.status_code)
+        data = response.get_json()
+        self.assertTrue(data["success"])
+        self.assertEqual("sample.conf", data["filename"])
+        self.assertEqual("port1", data["sections"]["interfaces"][0]["name"])
+
+    def test_report_rejects_empty_upload(self):
+        response = self.client.post(
+            "/api/report",
+            data={"file": (io.BytesIO(b""), "empty.conf")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(400, response.status_code)
+        self.assertFalse(response.get_json()["success"])
+
+    def test_report_rejects_invalid_encoding(self):
+        response = self.client.post(
+            "/api/report",
+            data={"file": (io.BytesIO(b"\xff"), "invalid.conf")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(400, response.status_code)
+        self.assertEqual("decode", response.get_json()["stage"])
 
     def test_excel_endpoint_returns_xlsx(self):
         response = self.client.post(

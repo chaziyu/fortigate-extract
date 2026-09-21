@@ -66,6 +66,12 @@ The central source object is `FGConfig`. Calculated report information is carrie
 
 ## Quick Start
 
+### Requirements
+
+- Python 3.12 (the version exercised by CI)
+- Windows for the bundled `run_excel_report.bat` launcher
+- A UTF-8 FortiGate CLI backup by default
+
 ### Windows
 
 Create a virtual environment and install dependencies:
@@ -97,13 +103,17 @@ Upload FortiGate configuration
 → Download Excel report
 ```
 
-Supported upload formats:
+Recommended filename extensions:
 
 ```text
 .conf
 .cfg
 .txt
 ```
+
+The browser file picker filters for these extensions. The server accepts any
+non-empty filename containing a valid FortiGate CLI backup. Web uploads are
+decoded as UTF-8 and limited to 32 MiB.
 
 ### CLI
 
@@ -125,6 +135,15 @@ python -m fortigate_extract.main extract ^
     --output firewall_inventory.xlsx ^
     --config extraction.yaml
 ```
+
+Currently, only input encoding is an active YAML setting:
+
+```yaml
+encoding: utf-8
+```
+
+Other fields in the internal configuration model are not yet supported as
+runtime controls and should not be relied on.
 
 ---
 
@@ -176,76 +195,23 @@ Source Appendix
 Validation / Coverage
 ```
 
-Important worksheets include:
+Every workbook follows a fixed schema. Important areas include:
 
-```text
-Summary
-Review Required
+- `Summary` and `Review Required`
+- system, DNS, and NTP settings
+- interfaces, secondary IPs, zones, and topology
+- addresses, services, policies, and NAT
+- routes, VPN, DHCP, SD-WAN, and SSL VPN
+- users, administrators, and security profiles
+- unresolved references, unsupported coverage, and source inventory
 
-Interfaces
-Interface Secondary IPs
-Zones
+The exact worksheet order is defined by
+[`SHEET_ORDER`](src/fortigate_extract/export/excel_schema.py). Warnings are
+reported through `Review Required` rather than a separate `Warnings` sheet.
 
-Addresses
-Wildcard FQDN
-Address Groups
-Service Categories
-Services
-Service Groups
-
-Policies
-
-IP Pools
-Virtual IPs
-VIP Real Servers
-VIP Groups
-NAT Rules
-
-Routes
-
-VPN Tunnels
-VPN Phase 2
-
-DHCP Servers
-DHCP IP Ranges
-DHCP Exclude Ranges
-DHCP Reservations
-
-SD-WAN
-SD-WAN Zones
-SD-WAN Members
-SD-WAN Health Checks
-SD-WAN Rules
-
-SSL VPN Settings
-SSL VPN Portals
-SSL VPN Authentication Rules
-
-Local Users
-User Groups
-Administrators
-Admin Profiles
-
-IPS Sensors
-IPS Sensor Entries
-IPS Exempt IPs
-Security Profiles
-
-External Resources
-
-FortiGate Source Inventory
-Firewall Policy Source Settings
-Interface Source Settings
-Interface Nested Configuration
-
-Unresolved References
-Warnings
-Unsupported
-FortiGate Source Inventory
-Extraction Coverage
-```
-
-Additional source-only FortiGate sections may appear when explicit configuration is present but no dedicated typed model exists yet.
+Explicit configuration without a dedicated typed model is preserved as rows
+in `FortiGate Source Inventory`, `Unsupported`, and `Extraction Coverage`. It
+does not create additional worksheets automatically.
 
 `Extraction Evidence` is intentionally not part of the standard workbook. Traceability is kept in the relevant object sheets, source appendix, validation sheets, and coverage sheets.
 
@@ -428,7 +394,7 @@ Validation detects problems without silently changing source data.
 
 Current validation covers areas such as:
 
-- duplicate references
+- duplicate object definitions and ambiguous source identity
 - broken object references
 - missing interfaces
 - missing addresses or address groups
@@ -490,74 +456,28 @@ Credential Configured = Yes
 
 Raw extras and generic source records pass through the same secret-sanitization rules before Excel export.
 
+The bundled web launcher binds to `127.0.0.1`. Do not expose the development
+server directly to untrusted networks.
+
 ---
 
 ## Project Structure
 
 ```text
 src/fortigate_extract/
-│
-├── tokenizer.py
-├── nodes.py
-├── parser.py
-├── section_registry.py
-├── command_evaluator.py
-│
-├── model/
-│   ├── source.py
-│   ├── interface.py
-│   ├── zone.py
-│   ├── address.py
-│   ├── service.py
-│   ├── policy.py
-│   ├── ippool.py
-│   ├── vip.py
-│   ├── route_static.py
-│   ├── vpn.py
-│   ├── vpn_ssl.py
-│   ├── dhcp.py
-│   ├── sdwan.py
-│   ├── user.py
-│   ├── admin.py
-│   ├── ips.py
-│   ├── security_profile.py
-│   └── external_resource.py
-│
-├── extraction/
-│   ├── extractor.py
-│   ├── result.py
-│   ├── source_inventory.py
-│   └── <domain extractors>
-│
-├── relationships/
-│   ├── references.py
-│   └── interface_topology.py
-│
-├── transform/
-│   ├── services.py
-│   ├── nat.py
-│   ├── policies.py
-│   └── vpn.py
-│
-├── derived.py
-│
-├── validation/
-│   ├── models.py
-│   └── validator.py
-│
-├── fortios/
-├── security/
-├── utils/
-│
-├── export/
-│   ├── __init__.py
-│   ├── excel.py
-│   └── excel_schema.py
-│
-├── main.py
-├── web.py
-├── templates/
-└── static/
+├── tokenizer.py / parser.py / command_evaluator.py
+├── model/             FortiGate source models
+├── extraction/        Domain extraction, source inventory, and metadata
+├── relationships/     Reference resolution and interface topology
+├── transform/         FortiGate normalization and derived semantics
+├── validation/        Non-mutating validation
+├── export/            Excel schema and workbook generation
+├── fortios/           FortiOS-specific reference data
+├── security/          Secret detection and sanitization
+├── web.py             Web and desktop application entry points
+├── web_report.py      Browser report serialization
+├── templates/         Web UI templates
+└── static/            Web UI assets
 ```
 
 ---
@@ -693,19 +613,16 @@ set PYTHONPATH=src
 python -m unittest discover -s tests -v
 ```
 
-The CI workflow also compiles the package before running tests.
+For pull requests, GitHub Actions uses Python 3.12, compiles `src` and `tests`,
+and then runs the same test command.
 
 Current regression coverage includes:
 
-- Excel workbook generation
-- expected worksheet presence
-- removal of obsolete `Extraction Evidence`
-- interface topology ordering
-- target-vendor column removal
-- secret-value leakage checks
-- web UI rendering
-- configuration preview
-- Excel download response
+- parsing, source extraction, and source preservation
+- relationships, topology, derived views, and validation
+- Excel workbook structure and presentation
+- secret-value leakage prevention
+- web report rendering, preview, and Excel download
 
 ---
 
@@ -747,6 +664,16 @@ The current project does not aim to provide:
 - generic migration orchestration
 
 These concerns should not be introduced into the tokenizer, parser, source models, or Excel exporter.
+
+---
+
+## Support and Licensing
+
+Report defects through this repository's GitHub issue tracker. Use a minimal,
+sanitized configuration sample and never attach production secrets.
+
+This repository currently has no declared license. Add the intended `LICENSE`
+file before presenting it as reusable or open-source software.
 
 ---
 

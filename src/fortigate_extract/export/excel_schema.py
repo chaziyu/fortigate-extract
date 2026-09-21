@@ -5,7 +5,7 @@ from __future__ import annotations
 
 SHEET_ORDER: tuple[str, ...] = (
     "Summary", "Review Required",
-    "System Settings", "DNS Settings", "NTP Settings",
+    "System Settings", "DNS Settings", "NTP Settings", "NTP Servers",
     "Interfaces", "Interface Secondary IPs", "Zones",
     "Addresses", "Wildcard FQDN", "Address Groups", "Services", "Service Groups",
     "Policies", "NAT Rules", "IP Pools", "Virtual IPs", "VIP Real Servers", "VIP Groups",
@@ -26,7 +26,8 @@ SHEET_HEADERS: dict[str, tuple[str, ...]] = {
     "Review Required": ("Severity", "Category", "Object", "VDOM", "Field", "Issue / Review Reason", "Source Sheet"),
     "System Settings": ("Setting", "Value", "Source Path", "Analysis Status", "Review Reasons"),
     "DNS Settings": ("Setting", "Value", "Source Path", "Analysis Status", "Review Reasons"),
-    "NTP Settings": ("Object", "Setting", "Value", "Source Path", "Analysis Status", "Review Reasons"),
+    "NTP Settings": ("Setting", "Value", "Source Path", "Analysis Status", "Review Reasons"),
+    "NTP Servers": ("Server ID", "Setting", "Value", "Source Path", "Analysis Status", "Review Reasons"),
     "Interfaces": (
         "Name", "Alias", "Type", "Role", "IP / Prefix", "Secondary IPv4 Addresses", "Addressing Mode",
         "Management Access", "VLAN ID", "Parent Interface", "Aggregate", "Physical Interfaces", "Topology Path",

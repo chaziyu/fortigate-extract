@@ -18,6 +18,7 @@ from .parser import parse_fortigate_config
 from .extraction.extractor import extract_fortigate_config
 from .validation.validator import validate_config
 from .export.excel import export_excel
+from .web_report import build_web_report
 
 
 XLSX_MIMETYPE = (
@@ -305,6 +306,44 @@ def create_app(
                 ),
                 500,
             )
+
+    # ------------------------------------------------------------------
+    # Browser report
+    # ------------------------------------------------------------------
+
+    @app.post("/api/report")
+    def report():
+        try:
+            extraction_config = ExtractionConfig()
+            filename, text = _read_uploaded_config(extraction_config)
+            tree, extracted, derived, validation = _run_extraction(
+                text,
+                extraction_config,
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "filename": filename,
+                    **build_web_report(
+                        extracted.config,
+                        derived,
+                        validation,
+                        top_level_sections=len(tree.configs),
+                    ),
+                }
+            )
+
+        except ConfigurationDecodeError as exc:
+            return jsonify(
+                {"success": False, "stage": "decode", "error": str(exc)}
+            ), 400
+
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        except Exception as exc:
+            app.logger.exception("FortiGate web report failed")
+            return jsonify({"success": False, "error": str(exc)}), 500
 
     # ------------------------------------------------------------------
     # Excel extraction
