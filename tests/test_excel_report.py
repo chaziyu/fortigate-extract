@@ -235,6 +235,179 @@ class ExcelReportTest(unittest.TestCase):
                 sheet_name,
             )
 
+    def test_vpn_phase1_ike_fields_are_exported_without_defaults_or_secrets(self):
+        source = r'''
+config vpn ipsec phase1-interface
+    edit "VPN-IKE-TEST"
+        set interface "wan1"
+        set type static
+        set remote-gw 203.0.113.10
+        set ike-version 2
+        set mode main
+        set authmethod signature
+        set authmethod-remote psk
+        set proposal aes256-sha256 aes128-sha256
+        set dhgrp 14 19
+        set keylife 28800
+        set nattraversal forced
+        set dpd on-idle
+        set dpd-retrycount 5
+        set dpd-retryinterval 10
+        set local-gw 192.0.2.1
+        set localid "site-a"
+        set localid-type fqdn
+        set peerid "site-b"
+        set certificate "vpn-cert"
+        set eap enable
+        set psksecret-remote "TEST-SECRET-DO-NOT-EXPORT"
+    next
+end
+'''
+        extracted = extract_fortigate_config(
+            parse_fortigate_config(source),
+            config=ExtractionConfig(),
+        )
+        item = extracted.config.ipsec_phase1[0]
+        self.assertEqual("2", item.ike_version)
+        self.assertEqual("main", item.mode)
+        self.assertEqual("signature", item.authmethod)
+        self.assertEqual("psk", item.authmethod_remote)
+        self.assertEqual(["aes256-sha256", "aes128-sha256"], item.proposal)
+        self.assertEqual([14, 19], item.dhgrp)
+        self.assertEqual(28800, item.keylife)
+        self.assertEqual("forced", item.nattraversal)
+        self.assertEqual("on-idle", item.dpd)
+        self.assertEqual(5, item.dpd_retrycount)
+        self.assertEqual("10", item.dpd_retryinterval)
+        self.assertEqual("site-a", item.localid)
+        self.assertEqual("fqdn", item.localid_type)
+        self.assertEqual("site-b", item.peerid)
+        self.assertEqual(["vpn-cert"], item.certificate)
+        self.assertTrue(item.psk_configured)
+        self.assertNotIn("TEST-SECRET-DO-NOT-EXPORT", str(item.model_dump()))
+        self.assertNotIn("TEST-SECRET-DO-NOT-EXPORT", str(item.raw_extra))
+
+        workbook = self._workbook(source)
+        headers, rows = self._rows(workbook["VPN Tunnels"])
+        self.assertNotIn("Proposal", headers)
+        self.assertNotIn("DH Groups", headers)
+        self.assertNotIn("Key Lifetime", headers)
+        self.assertNotIn("DPD", headers)
+        for header in (
+            "IKE Version", "IKE Mode", "Authentication Method",
+            "Remote Authentication Method", "PSK Configured",
+            "Phase 1 Proposal", "Phase 1 DH Groups", "Key Lifetime (Seconds)",
+            "NAT Traversal", "DPD Mode", "DPD Retry Count", "DPD Retry Interval",
+            "Local ID", "Local ID Type", "Peer ID", "Certificate",
+        ):
+            self.assertIn(header, headers)
+        self.assertTrue(workbook["VPN Tunnels"].column_dimensions[
+            get_column_letter(headers.index("Additional Settings") + 1)
+        ].hidden)
+        row = rows[0]
+        self.assertEqual("2", row[headers.index("IKE Version")])
+        self.assertEqual("main", row[headers.index("IKE Mode")])
+        self.assertEqual("signature", row[headers.index("Authentication Method")])
+        self.assertEqual("psk", row[headers.index("Remote Authentication Method")])
+        self.assertEqual("Yes", row[headers.index("PSK Configured")])
+        self.assertEqual("aes256-sha256\naes128-sha256", row[headers.index("Phase 1 Proposal")])
+        self.assertEqual("14\n19", row[headers.index("Phase 1 DH Groups")])
+        self.assertEqual(28800, row[headers.index("Key Lifetime (Seconds)")])
+        self.assertEqual(5, row[headers.index("DPD Retry Count")])
+        self.assertEqual("10", row[headers.index("DPD Retry Interval")])
+        self.assertIn("eap", str(row[headers.index("Additional Settings")]))
+        self.assertNotIn("TEST-SECRET-DO-NOT-EXPORT", str(row))
+
+    def test_vpn_phase1_missing_ike_fields_remain_blank(self):
+        workbook = self._workbook(
+            """
+config vpn ipsec phase1-interface
+    edit "MINIMAL"
+        set interface "wan1"
+    next
+end
+"""
+        )
+        headers, rows = self._rows(workbook["VPN Tunnels"])
+        row = rows[0]
+        for header in (
+            "IKE Version", "Key Lifetime (Seconds)", "NAT Traversal",
+            "DPD Retry Count",
+        ):
+            self.assertIsNone(row[headers.index(header)])
+        self.assertEqual("No", row[headers.index("PSK Configured")])
+
+    def test_ips_source_fields_and_nested_exemptions(self):
+        source = r'''
+config ips sensor
+    edit "ips-sensor"
+        config entries
+            edit 42
+                set rule 1001
+                set cve CVE-2026-0001
+                set default-action pass
+                set default-status enable
+                set action block
+                set status enable
+                set last-modified "2026-01-02 03:04:05"
+                set custom-option "preserve-me"
+                config exempt-ip
+                    edit 7
+                        set src-ip 192.0.2.10
+                        set dst-ip 198.51.100.10
+                    next
+                end
+            next
+        end
+    next
+end
+'''
+        extracted = extract_fortigate_config(
+            parse_fortigate_config(source),
+            config=ExtractionConfig(),
+        )
+        entry = extracted.config.ips_sensors[0].entries[0]
+        self.assertEqual("2026-01-02 03:04:05", entry.last_modified)
+        self.assertEqual("pass", entry.default_action)
+        self.assertEqual("enable", entry.default_status)
+        self.assertEqual("block", entry.action)
+        self.assertEqual("enable", entry.status)
+        self.assertEqual([(7, "192.0.2.10", "198.51.100.10")], [
+            (item.id, item.src_ip, item.dst_ip) for item in entry.exempt_ips
+        ])
+
+        workbook = self._workbook(source)
+        headers, rows = self._rows(workbook["IPS Sensor Entries"])
+        self.assertIn("Default Action Filter", headers)
+        self.assertIn("Default Status Filter", headers)
+        self.assertIn("Last Modified Filter", headers)
+        self.assertNotIn("Default Action", headers)
+        self.assertNotIn("Default Status", headers)
+        self.assertIn("Action", headers)
+        self.assertIn("Status", headers)
+        self.assertIn("Additional Settings", headers)
+        self.assertTrue(workbook["IPS Sensor Entries"].column_dimensions[
+            get_column_letter(headers.index("Additional Settings") + 1)
+        ].hidden)
+        row = rows[0]
+        self.assertEqual("pass", row[headers.index("Default Action Filter")])
+        self.assertEqual("enable", row[headers.index("Default Status Filter")])
+        self.assertEqual("block", row[headers.index("Action")])
+        self.assertEqual("enable", row[headers.index("Status")])
+        self.assertEqual("2026-01-02 03:04:05", row[headers.index("Last Modified Filter")])
+        self.assertEqual("root", row[headers.index("VDOM")])
+        self.assertIn("preserve-me", str(row[headers.index("Additional Settings")]))
+
+        headers, rows = self._rows(workbook["IPS Exempt IPs"])
+        self.assertEqual(1, len(rows))
+        row = rows[0]
+        self.assertEqual("ips-sensor", row[headers.index("Sensor")])
+        self.assertEqual(42, row[headers.index("Entry ID")])
+        self.assertEqual(7, row[headers.index("Exempt IP ID")])
+        self.assertEqual("192.0.2.10", row[headers.index("Source IP")])
+        self.assertEqual("198.51.100.10", row[headers.index("Destination IP")])
+        self.assertEqual("root", row[headers.index("VDOM")])
+
     def test_ntp_config_settings_are_separate_from_servers(self):
         workbook = self._workbook(
             """

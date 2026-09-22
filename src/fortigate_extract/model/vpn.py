@@ -20,7 +20,9 @@ class FGIPsecPhase1(BaseModel):
 
     # IKE
     ike_version: str | None = None
+    mode: str | None = None
     authmethod: str | None = None
+    authmethod_remote: str | None = None
     proposal: list[str] = Field(default_factory=list)
     dhgrp: list[int] = Field(default_factory=list)
 
@@ -30,11 +32,17 @@ class FGIPsecPhase1(BaseModel):
     # NAT traversal / liveness
     nattraversal: str | None = None
     dpd: str | None = None
+    dpd_retrycount: int | None = None
+    dpd_retryinterval: str | None = None
 
     # Optional identity/certificate references
     localid: str | None = None
+    localid_type: str | None = None
     peerid: str | None = None
     certificate: list[str] = Field(default_factory=list)
+
+    # Credential presence metadata; the credential itself is never retained.
+    psk_configured: bool = False
 
     # Metadata
     comments: str | None = None

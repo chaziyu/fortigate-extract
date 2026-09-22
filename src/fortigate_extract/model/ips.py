@@ -34,7 +34,7 @@ class FGIPSSensorEntry(BaseModel):
     default_action: str | None = None
     default_status: str | None = None
 
-    # Effective action/state
+    # Configured/source action and status
     action: str | None = None
     status: str | None = None
 
