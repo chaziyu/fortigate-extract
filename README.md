@@ -409,13 +409,11 @@ Current validation covers areas such as:
 - policy issues
 - VPN issues
 
-Validation results feed report areas such as:
+Validation results feed:
 
-```text
-Review Required
-Unresolved References
-Warnings
-```
+- `Review Required` in the workbook
+- `Unresolved References` in the workbook
+- warning and error counts in the browser report
 
 Preferred behavior:
 
