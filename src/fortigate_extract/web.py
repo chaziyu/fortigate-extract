@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import sys
 from pathlib import Path
 
@@ -13,11 +12,13 @@ from flask import (
     send_file,
 )
 
-from config import ExtractionConfig
-from parser import parse_fortigate_config
-from extraction.extractor import extract_fortigate_config
-from validation.validator import validate_config
-from export.excel import export_excel
+from .config import ExtractionConfig
+from .derived import build_derived_views
+from .parser import parse_fortigate_config
+from .extraction.extractor import extract_fortigate_config
+from .validation.validator import validate_config
+from .export.excel import export_excel
+from .web_report import build_web_report
 
 
 XLSX_MIMETYPE = (
@@ -114,8 +115,17 @@ def _validation_summary(validation) -> dict:
     severity_counts: dict[str, int] = {}
 
     for issue in issues:
+        raw_severity = getattr(
+            issue,
+            "severity",
+            "unknown",
+        )
         severity = str(
-            getattr(issue, "severity", "unknown")
+            getattr(
+                raw_severity,
+                "value",
+                raw_severity,
+            )
         )
 
         severity_counts[severity] = (
@@ -145,11 +155,16 @@ def _run_extraction(
         config=config,
     )
 
-    validation = validate_config(
-        extracted.config,
+    derived = build_derived_views(
+        extracted.config
     )
 
-    return tree, extracted, validation
+    validation = validate_config(
+        extracted.config,
+        derived=derived,
+    )
+
+    return tree, extracted, derived, validation
 
 
 def create_app(
@@ -235,7 +250,7 @@ def create_app(
                 extraction_config
             )
 
-            tree, extracted, validation = _run_extraction(
+            tree, extracted, derived, validation = _run_extraction(
                 text,
                 extraction_config,
             )
@@ -244,8 +259,6 @@ def create_app(
                 {
                     "success": True,
                     "filename": filename,
-                    "source_version": tree.source_version,
-                    "source_build": tree.source_build,
                     "top_level_sections": len(tree.configs),
                     "objects": _config_summary(
                         extracted.config
@@ -295,6 +308,44 @@ def create_app(
             )
 
     # ------------------------------------------------------------------
+    # Browser report
+    # ------------------------------------------------------------------
+
+    @app.post("/api/report")
+    def report():
+        try:
+            extraction_config = ExtractionConfig()
+            filename, text = _read_uploaded_config(extraction_config)
+            tree, extracted, derived, validation = _run_extraction(
+                text,
+                extraction_config,
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "filename": filename,
+                    **build_web_report(
+                        extracted.config,
+                        derived,
+                        validation,
+                        top_level_sections=len(tree.configs),
+                    ),
+                }
+            )
+
+        except ConfigurationDecodeError as exc:
+            return jsonify(
+                {"success": False, "stage": "decode", "error": str(exc)}
+            ), 400
+
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+
+        except Exception as exc:
+            app.logger.exception("FortiGate web report failed")
+            return jsonify({"success": False, "error": str(exc)}), 500
+
+    # ------------------------------------------------------------------
     # Excel extraction
     # ------------------------------------------------------------------
 
@@ -311,7 +362,7 @@ def create_app(
                 extraction_config
             )
 
-            _, extracted, validation = _run_extraction(
+            _, extracted, derived, validation = _run_extraction(
                 text,
                 extraction_config,
             )
@@ -320,9 +371,11 @@ def create_app(
 
             export_excel(
                 extracted=extracted,
+                derived=derived,
                 validation=validation,
                 output=workbook,
                 config=extraction_config,
+                source_name=filename,
             )
 
             workbook.seek(0)

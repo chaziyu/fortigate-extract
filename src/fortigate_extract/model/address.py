@@ -65,6 +65,8 @@ class FGAddressGroup(BaseModel):
     name: str
     vdom: str = "root"
 
+    address_family: Literal["ipv4", "ipv6"] = "ipv4"
+
     members: list[str] = Field(default_factory=list)
 
     exclude: str | None = None

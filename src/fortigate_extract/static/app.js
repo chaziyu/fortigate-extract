@@ -1,2435 +1,612 @@
 document.addEventListener("DOMContentLoaded", () => {
-  // =========================================================================
-  // Application State
-  // =========================================================================
   let currentFile = null;
-  let currentLiveCollectionId = null;
-  let currentPreviewId = null;
-  let currentSessionId = null;
-  let selectedSourceVendor = "fortigate";
-  let selectedTargetVendor = "palo_alto";
-  let offlineTargetVendor = "palo_alto";
-  let activeMode = "download"; // 'download', 'live', or 'extract'
-  let activeIngestMethod = "file"; // 'file' or 'api'
-  let currentPolicies = [];
+  let currentReport = null;
+  let activeMode = "report";
+  let activeReportSection = "overview";
+  let activeObjectSection = "addresses";
   let sourceReady = false;
-  let sourceFailed = false;
-  let sourceRevision = 0;
-  let previewController = null;
-  let liveOperationRunning = false;
-  let sessionApproved = false;
-  const busyButtons = new Set();
+  let reportController = null;
 
-  const MODE_COPY = {
-    download: [
-      "Convert configuration",
-      "Bring your firewall configuration to its next home.",
-    ],
-    extract: [
-      "Extract an inventory",
-      "Explore your source configuration in a reviewable Excel workbook.",
-    ],
-    live: [
-      "Live migration",
-      "Verify your target, review a plan, then apply with confidence.",
-    ],
-  };
-
-  // Vendor metadata specifications for dynamic API credential forms & guides
-  const VENDOR_CONFIGS = {
-    fortigate: {
-      name: "Fortinet FortiGate",
-      icon: "🛡️",
-      protocol: "FortiGate SSH",
-      desc: "Connects over SSH to retrieve the complete read-only FortiGate CLI configuration.",
-      defaultPort: 22,
-      authTypes: [{ id: "userpass", label: "SSH Username & Password" }],
-      fileAccept: ".conf,.cfg,.txt",
-      dropText:
-        "Supports FortiOS <code>.conf</code>, <code>.cfg</code>, or <code>.txt</code> backup files",
-      fields: [
-        {
-          id: "api-host",
-          label: "FortiGate IP / Hostname",
-          type: "text",
-          required: true,
-          placeholder: "192.168.1.99 or fg.corp.local",
-          col: "col-8",
-        },
-        {
-          id: "api-port",
-          label: "SSH Port",
-          type: "number",
-          required: true,
-          value: 22,
-          col: "col-4",
-        },
-        {
-          id: "api-username",
-          label: "SSH Username",
-          type: "text",
-          required: true,
-          placeholder: "admin",
-          col: "col-6",
-        },
-        {
-          id: "api-password",
-          label: "SSH Password",
-          type: "password",
-          required: true,
-          placeholder: "••••••••",
-          col: "col-6",
-        },
-        {
-          id: "api-verify-host-key",
-          label: "Verify SSH host key",
-          type: "checkbox",
-          checked: false,
-          col: "col-12",
-        },
-      ],
-    },
-    palo_alto: {
-      name: "Palo Alto Networks",
-      icon: "🔥",
-      protocol: "PAN-OS XML / REST API (HTTPS /api/)",
-      desc: "Connects to PAN-OS XML API to retrieve active candidate/running configurations and security rulebases.",
-      defaultPort: 443,
-      authTypes: [
-        { id: "apikey", label: "PAN-OS API Key" },
-        { id: "userpass", label: "Admin Username & Password" },
-      ],
-      fileAccept: ".xml,.txt,.conf",
-      dropText:
-        "Supports Palo Alto Networks PAN-OS <code>.xml</code> or <code>.txt</code> configuration exports",
-      fields: [
-        {
-          id: "api-host",
-          label: "PAN-OS IP / Hostname",
-          type: "text",
-          required: true,
-          placeholder: "192.168.1.1 or panorama.corp.local",
-          col: "col-8",
-        },
-        {
-          id: "api-port",
-          label: "HTTPS Port",
-          type: "number",
-          required: true,
-          value: 443,
-          col: "col-4",
-        },
-        {
-          id: "api-vsys",
-          label: "Virtual System (VSYS)",
-          type: "text",
-          required: false,
-          value: "vsys1",
-          placeholder: "vsys1",
-          col: "col-6",
-        },
-        {
-          id: "api-token",
-          label: "PAN-OS API Key",
-          type: "password",
-          required: true,
-          placeholder: "LUFRPT14MW5xV05xWDV...",
-          col: "col-6",
-          authType: "apikey",
-        },
-        {
-          id: "api-username",
-          label: "Admin Username",
-          type: "text",
-          required: true,
-          placeholder: "admin",
-          col: "col-6",
-          authType: "userpass",
-        },
-        {
-          id: "api-password",
-          label: "Admin Password",
-          type: "password",
-          required: true,
-          placeholder: "••••••••",
-          col: "col-6",
-          authType: "userpass",
-        },
-        {
-          id: "api-insecure",
-          label:
-            "Allow Self-Signed TLS Certificates (Disable SSL Verification)",
-          type: "checkbox",
-          checked: true,
-          col: "col-12",
-        },
-      ],
-    },
-    cisco_asa: {
-      name: "Cisco ASA / FTD",
-      icon: "🌐",
-      protocol: "Cisco Firepower Management Center (FMC) / ASA REST API",
-      desc: "Authenticates with Cisco FMC REST API / ASA to pull network objects, ACL policies, and NAT definitions.",
-      defaultPort: 443,
-      authTypes: [{ id: "userpass", label: "Admin Credentials" }],
-      fileAccept: ".cfg,.txt,.conf",
-      dropText:
-        "Supports Cisco ASA / Firepower <code>.cfg</code> or <code>.txt</code> configuration files",
-      fields: [
-        {
-          id: "api-host",
-          label: "FMC / ASA Host or IP",
-          type: "text",
-          required: true,
-          placeholder: "fmc.corp.local or 192.168.1.1",
-          col: "col-8",
-        },
-        {
-          id: "api-port",
-          label: "HTTPS Port",
-          type: "number",
-          required: true,
-          value: 443,
-          col: "col-4",
-        },
-        {
-          id: "api-username",
-          label: "Admin Username",
-          type: "text",
-          required: true,
-          placeholder: "apiadmin",
-          col: "col-6",
-        },
-        {
-          id: "api-password",
-          label: "Admin Password",
-          type: "password",
-          required: true,
-          placeholder: "••••••••",
-          col: "col-6",
-        },
-        {
-          id: "api-domain",
-          label: "Domain UUID / Context",
-          type: "text",
-          required: false,
-          placeholder: "e276abec-e0f2-11e3-8169-6d9ed49b625f",
-          col: "col-12",
-        },
-        {
-          id: "api-insecure",
-          label:
-            "Allow Self-Signed TLS Certificates (Disable SSL Verification)",
-          type: "checkbox",
-          checked: true,
-          col: "col-12",
-        },
-      ],
-    },
-    checkpoint: {
-      name: "Check Point",
-      icon: "🔒",
-      protocol: "Check Point Management Web API (/web_api/)",
-      desc: "Queries Check Point R80/R81 SmartCenter Web API to extract network objects, rulebases, and NAT tables.",
-      defaultPort: 443,
-      authTypes: [{ id: "userpass", label: "Management Admin Credentials" }],
-      fileAccept: ".json,.txt",
-      dropText:
-        "Supports Check Point R80/R81 <code>.json</code> database dumps or export files",
-      fields: [
-        {
-          id: "api-host",
-          label: "Management Server IP / Hostname",
-          type: "text",
-          required: true,
-          placeholder: "192.168.1.10",
-          col: "col-8",
-        },
-        {
-          id: "api-port",
-          label: "HTTPS Port",
-          type: "number",
-          required: true,
-          value: 443,
-          col: "col-4",
-        },
-        {
-          id: "api-username",
-          label: "Admin Username",
-          type: "text",
-          required: true,
-          placeholder: "admin",
-          col: "col-6",
-        },
-        {
-          id: "api-password",
-          label: "Admin Password",
-          type: "password",
-          required: true,
-          placeholder: "••••••••",
-          col: "col-6",
-        },
-        {
-          id: "api-domain",
-          label: "Domain (MDS / Multi-Domain)",
-          type: "text",
-          required: false,
-          placeholder: "Default",
-          col: "col-12",
-        },
-        {
-          id: "api-insecure",
-          label:
-            "Allow Self-Signed TLS Certificates (Disable SSL Verification)",
-          type: "checkbox",
-          checked: true,
-          col: "col-12",
-        },
-      ],
-    },
-    juniper_srx: {
-      name: "Juniper SRX",
-      icon: "🌲",
-      protocol: "JunOS NETCONF over SSH / PyEZ",
-      desc: "Connects via NETCONF (Port 830) to retrieve JunOS security zones, address books, and policy sets.",
-      defaultPort: 830,
-      authTypes: [{ id: "userpass", label: "NETCONF SSH Admin Credentials" }],
-      fileAccept: ".set,.conf,.txt",
-      dropText:
-        "Supports JunOS SRX <code>.set</code>, <code>.conf</code>, or <code>.txt</code> files",
-      fields: [
-        {
-          id: "api-host",
-          label: "JunOS Device IP / Hostname",
-          type: "text",
-          required: true,
-          placeholder: "192.168.1.1 or srx.corp.local",
-          col: "col-8",
-        },
-        {
-          id: "api-port",
-          label: "NETCONF Port",
-          type: "number",
-          required: true,
-          value: 830,
-          col: "col-4",
-        },
-        {
-          id: "api-username",
-          label: "Admin Username",
-          type: "text",
-          required: true,
-          placeholder: "admin",
-          col: "col-6",
-        },
-        {
-          id: "api-password",
-          label: "Admin Password",
-          type: "password",
-          required: true,
-          placeholder: "••••••••",
-          col: "col-6",
-        },
-        {
-          id: "api-insecure",
-          label: "Allow Self-Signed / Host Key Bypass",
-          type: "checkbox",
-          checked: true,
-          col: "col-12",
-        },
-      ],
-    },
-  };
-
-  // =========================================================================
-  // DOM Elements Cache
-  // =========================================================================
-  // Mode Switcher Tabs
-  const tabDownload = document.getElementById("tab-download");
-  const tabLive = document.getElementById("tab-live");
-  const tabExtract = document.getElementById("tab-extract");
-  const modeDownloadForm = document.getElementById("mode-download-form");
-  const modeLiveForm = document.getElementById("mode-live-form");
-  const modeExtractForm = document.getElementById("mode-extract-form");
-
-  // Ingestion Method Tabs
-  const btnIngestFile = document.getElementById("btn-ingest-file");
-  const btnIngestApi = document.getElementById("btn-ingest-api");
-  const ingestFileContainer = document.getElementById("ingest-file-container");
-  const ingestApiContainer = document.getElementById("ingest-api-container");
-
-  // Vendor Selection Dropdowns
-  const sourceVendorSelect = document.getElementById("source-vendor-select");
-  const targetVendorSelect = document.getElementById("target-vendor-select");
-  const targetVendorGroup = document.getElementById("target-vendor-group");
-  const vendorSelectorGrid = document.getElementById("vendor-selector-grid");
-
-  // File Ingest Dropzone
   const dropzone = document.getElementById("file-dropzone");
   const fileInput = document.getElementById("file-input");
-  const dropzoneSubtext = document.getElementById("dropzone-subtext");
   const selectedFileCard = document.getElementById("selected-file-card");
   const selectedFilename = document.getElementById("selected-filename");
   const selectedFilesize = document.getElementById("selected-filesize");
   const btnRemoveFile = document.getElementById("btn-remove-file");
-
-  // API Ingest Components
-  const apiCredentialFields = document.getElementById("api-credential-fields");
-  const btnApiExtract = document.getElementById("btn-api-extract");
-  const apiIngestSuccess = document.getElementById("api-ingest-success");
-  const apiHostname = document.getElementById("api-hostname");
-  const apiStatsSummary = document.getElementById("api-stats-summary");
-  const btnClearApiIngest = document.getElementById("btn-clear-api-ingest");
-  const apiIngestError = document.getElementById("api-ingest-error");
-  const apiErrorTitle = document.getElementById("api-error-title");
-  const apiErrorDetail = document.getElementById("api-error-detail");
-  const apiErrorHint = document.getElementById("api-error-hint");
-  const btnDismissApiError = document.getElementById("btn-dismiss-api-error");
-
-  // Optimizer Panel Stats
-  const optimizerPanel = document.getElementById("optimizer-panel");
-  const optPruneObjects = document.getElementById("opt-prune-objects");
-  const statTotalRules = document.getElementById("stat-total-rules");
-  const statTotalObjects = document.getElementById("stat-total-objects");
-
-  // Mode A Components
-  const btnGenerateBundle = document.getElementById("btn-generate-bundle");
   const btnExtractExcel = document.getElementById("btn-extract-excel");
-
-  // Mode B Target Form & Diagnostics
-  const panHost = document.getElementById("pan-host");
-  const panPort = document.getElementById("pan-port");
-  const radioAuthTypes = document.querySelectorAll('input[name="auth-type"]');
-  const authApikeyGroup = document.getElementById("auth-apikey-group");
-  const authUserGroup = document.getElementById("auth-user-group");
-  const authPassGroup = document.getElementById("auth-pass-group");
-  const panApikey = document.getElementById("pan-apikey");
-  const panUser = document.getElementById("pan-user");
-  const panPass = document.getElementById("pan-pass");
-  const panInsecure = document.getElementById("pan-insecure");
-  const btnRunDiagnostics = document.getElementById("btn-run-diagnostics");
-
-  // Mode B Stepper & Action Buttons
-  const btnPlanDryrun = document.getElementById("btn-plan-dryrun");
-  const planSummaryBadges = document.getElementById("plan-summary-badges");
-  const badgeAdd = document.getElementById("badge-add");
-  const badgeChange = document.getElementById("badge-change");
-  const badgeDestroy = document.getElementById("badge-destroy");
-  const planStatusMsg = document.getElementById("plan-status-msg");
-  const btnApplyLive = document.getElementById("btn-apply-live");
-  const applyStatusMsg = document.getElementById("apply-status-msg");
-  const btnRollback = document.getElementById("btn-rollback");
-  const rollbackStatusMsg = document.getElementById("rollback-status-msg");
-
-  // Terminal
-  const terminalStreamBody = document.getElementById("terminal-stream-body");
-  const termAutoscroll = document.getElementById("term-autoscroll");
-  const btnClearTerm = document.getElementById("btn-clear-term");
-  const btnCopyTerm = document.getElementById("btn-copy-term");
-
-  // Post Actions Bar
-  const postActionsBar = document.getElementById("post-actions-bar");
-  const btnDownloadState = document.getElementById("btn-download-state");
-  const btnDownloadAudit = document.getElementById("btn-download-audit");
-
-  // Toast Container & Error Banner
-  const toastContainer = document.getElementById("toast-container");
+  const tabReport = document.getElementById("tab-report");
+  const tabExtract = document.getElementById("tab-extract");
+  const pageTitle = document.getElementById("page-title");
+  const pageDescription = document.getElementById("page-description");
+  const excelActionFooter = document.getElementById("excel-action-footer");
+  const reportContainer = document.getElementById("report-container");
+  const reportOverview = document.getElementById("report-overview");
+  const reportData = document.getElementById("report-data");
+  const reportSummary = document.getElementById("report-summary");
+  const reportFilename = document.getElementById("report-filename");
+  const reportVdomSummary = document.getElementById("report-vdom-summary");
+  const reportObjectTabs = document.getElementById("report-object-tabs");
+  const reportSearch = document.getElementById("report-search");
+  const reportVdomFilter = document.getElementById("report-vdom-filter");
+  const reportSeverityFilter = document.getElementById("report-severity-filter");
+  const reportTableHead = document.getElementById("report-table-head");
+  const reportTableBody = document.getElementById("report-table-body");
+  const reportEmpty = document.getElementById("report-empty");
+  const previewStatus = document.getElementById("preview-status");
+  const inventorySummary = document.getElementById("inventory-summary");
   const errorBanner = document.getElementById("error-message");
+  const btnNewWorkspace = document.getElementById("btn-new-workspace");
+  const btnToggleTheme = document.getElementById("btn-toggle-theme");
+  const themeLabel = document.getElementById("theme-label");
+  const toastContainer = document.getElementById("toast-container");
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const index = Math.min(
+      Math.floor(Math.log(bytes) / Math.log(1024)),
+      units.length - 1,
+    );
+    const value = bytes / 1024 ** index;
+    return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+  }
 
   function setText(id, value) {
     const element = document.getElementById(id);
-    if (element) element.textContent = value;
+    if (element) element.textContent = String(value);
   }
 
   function count(value) {
-    return Math.max(0, Number(value) || 0);
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   }
 
-  function supportsLiveIngestion(vendorId) {
-    return vendorId === "fortigate";
+  function showError(message) {
+    if (!errorBanner) return;
+    errorBanner.textContent = message;
+    errorBanner.classList.remove("hidden");
   }
 
-  function syncLiveIngestCapability() {
-    const supported = supportsLiveIngestion(selectedSourceVendor);
-    if (btnIngestApi) {
-      btnIngestApi.disabled = !supported;
-      btnIngestApi.setAttribute("aria-disabled", String(!supported));
-      btnIngestApi.title = supported
-        ? "Connect to FortiGate over SSH"
-        : "Live device ingestion is not supported for this vendor";
-    }
-    setText(
-      "live-ingest-note",
-      supported
-        ? "Connect to the FortiGate over SSH to retrieve its configuration."
-        : "Live device ingestion is not supported for this vendor. Upload a configuration file instead.",
-    );
-    if (!supported && activeIngestMethod === "api") switchIngestMethod("file");
-  }
-
-  function syncWorkspace() {
-    const hasFile = Boolean(currentFile);
-    const hasLiveCollection = Boolean(currentLiveCollectionId);
-    const hasInput = hasFile || hasLiveCollection;
-    if (btnGenerateBundle)
-      btnGenerateBundle.disabled =
-        !hasFile || !sourceReady || busyButtons.has(btnGenerateBundle) || liveOperationRunning;
-    if (btnExtractExcel)
-      btnExtractExcel.disabled =
-        !hasInput || !sourceReady || busyButtons.has(btnExtractExcel) || liveOperationRunning;
-    if (btnPlanDryrun)
-      btnPlanDryrun.disabled =
-        !hasFile || !sourceReady || busyButtons.has(btnPlanDryrun) || liveOperationRunning;
-    setText(
-      "summary-source",
-      VENDOR_CONFIGS[selectedSourceVendor]?.name || selectedSourceVendor,
-    );
-    setText(
-      "summary-target",
-      activeMode === "extract"
-        ? "Source inventory"
-        : VENDOR_CONFIGS[selectedTargetVendor]?.name || selectedTargetVendor,
-    );
-    setText(
-      "summary-file",
-      currentFile?.name ||
-        (currentLiveCollectionId
-          ? "Live device configuration"
-          : "No configuration selected"),
-    );
-    setText(
-      "summary-state",
-      sourceReady
-        ? "Ready for review"
-        : sourceFailed
-          ? "Review source"
-          : hasInput
-            ? "Reading configuration"
-            : "Awaiting source",
-    );
-    const summaryState = document.getElementById("summary-state");
-    if (summaryState)
-      summaryState.dataset.state = sourceReady
-        ? "ready"
-        : sourceFailed
-          ? "error"
-          : hasInput
-            ? "loading"
-            : "idle";
-    const exportHint = document.querySelector(
-      "#mode-download-form .export-hint",
-    );
-    if (exportHint) {
-      const hintCopy = sourceReady
-        ? "Ready to generate your migration bundle."
-        : sourceFailed
-          ? "Review the source error before generating a bundle."
-          : hasInput
-            ? "Reading your source configuration…"
-            : "Add a source to get started.";
-      const textNode = [...exportHint.childNodes].find(
-        (node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim(),
-      );
-      if (textNode) textNode.textContent = hintCopy;
-      else exportHint.appendChild(document.createTextNode(hintCopy));
-    }
-    document
-      .getElementById("workflow-step-source")
-      ?.classList.toggle("complete", sourceReady);
-    document
-      .getElementById("workflow-step-source")
-      ?.classList.toggle("current", !sourceReady);
-    document
-      .getElementById("workflow-step-review")
-      ?.classList.toggle("current", sourceReady);
-    if (targetVendorSelect)
-      targetVendorSelect.disabled =
-        liveOperationRunning || activeMode === "live";
-  }
-
-  function setBusy(button, busy) {
-    if (!button) return;
-    if (busy) busyButtons.add(button);
-    else busyButtons.delete(button);
-    button.setAttribute("aria-busy", String(busy));
-    button.disabled = busy;
-    syncWorkspace();
+  function hideError() {
+    if (!errorBanner) return;
+    errorBanner.textContent = "";
+    errorBanner.classList.add("hidden");
   }
 
   function setPreviewStatus(message, state = "idle") {
-    const status = document.getElementById("preview-status");
-    if (status) {
-      status.textContent = message;
-      status.dataset.state = state;
-      status.classList.toggle("hidden", !message);
+    if (!previewStatus) return;
+    previewStatus.textContent = message;
+    previewStatus.dataset.state = state;
+    previewStatus.classList.toggle("hidden", !message);
+  }
+
+  function setBusy(busy) {
+    if (!btnExtractExcel) return;
+    btnExtractExcel.disabled = busy || !sourceReady;
+    btnExtractExcel.setAttribute("aria-busy", String(busy));
+    btnExtractExcel.querySelector(".spinner")?.classList.toggle("hidden", !busy);
+    const text = btnExtractExcel.querySelector(".btn-text");
+    if (text) {
+      text.textContent = busy ? "Building Excel Report..." : "Download Excel Report";
     }
   }
 
-  function resetDeployment() {
-    currentSessionId = null;
-    sessionApproved = false;
-    if (btnApplyLive) btnApplyLive.disabled = true;
-    if (btnRollback) btnRollback.disabled = true;
-    planSummaryBadges?.classList.add("hidden");
-    postActionsBar?.classList.add("hidden");
-    if (planStatusMsg)
-      planStatusMsg.textContent =
-        "Review a dry-run plan before applying changes.";
-    if (applyStatusMsg)
-      applyStatusMsg.textContent =
-        "A reviewed plan is required before live deployment.";
-    if (rollbackStatusMsg)
-      rollbackStatusMsg.textContent =
-        "Remove resources managed by this deployment.";
-  }
-
-  function resetPreview() {
-    sourceRevision += 1;
-    previewController?.abort();
-    previewController = null;
-    sourceReady = false;
-    sourceFailed = false;
-    currentPreviewId = null;
-    currentPolicies = [];
-    optimizerPanel?.classList.add("hidden");
-    [statTotalRules, statTotalObjects].forEach((element) => {
-      if (element) element.textContent = "0";
-    });
-    setText("inventory-interface-count", "—");
-    setText("inventory-policy-count", "—");
-    setPreviewStatus("");
-    resetDeployment();
-    syncWorkspace();
-  }
-
-  function setLiveOperationRunning(running) {
-    liveOperationRunning = running;
+  function resetCounts() {
     [
-      sourceVendorSelect,
-      targetVendorSelect,
-      btnRemoveFile,
-      btnClearApiIngest,
-      btnIngestFile,
-      btnIngestApi,
-      fileInput,
-      btnApiExtract,
-      panHost,
-      panPort,
-      panApikey,
-      panUser,
-      panPass,
-      panInsecure,
-      optPruneObjects,
-      document.getElementById("btn-new-workspace"),
-      ...radioAuthTypes,
-      ...document.querySelectorAll("#api-credential-fields input"),
-    ].forEach((element) => {
-      if (element) element.disabled = running;
+      "validation-error-count",
+      "validation-warning-count",
+    ].forEach((id) => setText(id, "—"));
+
+    setText("stat-total-rules", "0");
+    setText("stat-total-objects", "0");
+    inventorySummary?.classList.add("hidden");
+  }
+
+  const reportColumns = {
+    interfaces: [
+      ["display_name", "Topology"], ["kind", "Kind"], ["ip", "IP / Remote Gateway"],
+      ["role", "Role"], ["parent", "Parent"], ["aggregate", "Aggregate"],
+      ["status", "Status"], ["review", "Review"],
+    ],
+    addresses: [
+      ["name", "Name"], ["value", "Value"], ["type", "Type"],
+      ["address_family", "Family"], ["associated_interface", "Interface"],
+      ["review", "Review"],
+    ],
+    address_groups: [
+      ["name", "Name"], ["members", "Members"], ["address_family", "Family"],
+      ["exclude_members", "Excluded"], ["review", "Review"],
+    ],
+    services: [
+      ["name", "Name"], ["protocol", "Protocol"], ["port", "Port"],
+      ["source_port", "Source Port"], ["generated", "Generated"],
+      ["review", "Review"],
+    ],
+    service_groups: [
+      ["name", "Name"], ["members", "Members"], ["generated", "Generated"],
+      ["review", "Review"],
+    ],
+    policies: [
+      ["policy_id", "ID"], ["name", "Name"], ["source_interfaces", "Source"],
+      ["destination_interfaces", "Destination"], ["services", "Service"],
+      ["action", "Action"], ["nat", "NAT"], ["review", "Review"],
+    ],
+    nat: [
+      ["policy_id", "Policy ID"], ["policy_name", "Policy"],
+      ["translation_type", "Type"], ["translated_addresses", "Address"],
+      ["egress_interfaces", "Egress"], ["review", "Review"],
+    ],
+    routes: [
+      ["route_id", "ID"], ["destination", "Destination"], ["gateway", "Gateway"],
+      ["device", "Device"], ["distance", "Distance"], ["status", "Status"],
+      ["review", "Review"],
+    ],
+    vpn: [
+      ["kind", "Type"], ["name", "Name"], ["attachment", "Interface / Phase 1"],
+      ["peer", "Gateway / Selectors"], ["crypto", "IKE / Proposal"],
+      ["topology", "Topology"], ["review", "Review"],
+    ],
+    validation: [
+      ["severity", "Severity"], ["domain", "Domain"], ["object_name", "Object"],
+      ["field", "Field"], ["message", "Issue"],
+    ],
+  };
+
+  function formatCell(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value);
+  }
+
+  function reportRows(section) {
+    const sections = currentReport?.sections || {};
+    if (section === "interfaces") {
+      return sections.interface_topology || sections.interfaces || [];
+    }
+    if (section === "objects") return sections[activeObjectSection] || [];
+    if (section === "vpn") {
+      return [
+        ...(sections.vpn_tunnels || []).map((row) => ({
+          ...row,
+          kind: "Tunnel",
+          attachment: row.interface,
+          peer: row.remote_gateway,
+          crypto: row.ike_version,
+          topology: row.topology_path,
+        })),
+        ...(sections.vpn_phase2 || []).map((row) => ({
+          ...row,
+          kind: "Phase 2",
+          attachment: row.phase1,
+          peer: [row.source_range, row.destination_range].filter(Boolean).join(" → "),
+          crypto: row.proposal,
+          topology: [],
+        })),
+      ];
+    }
+    if (section === "validation") {
+      return sections.validation || [];
+    }
+    return sections[section] || [];
+  }
+
+  function renderTable() {
+    if (!currentReport || activeReportSection === "overview") return;
+    const columnKey = activeReportSection === "objects"
+      ? activeObjectSection
+      : activeReportSection;
+    const columns = reportColumns[columnKey] || [];
+    const search = reportSearch?.value.trim().toLowerCase() || "";
+    const vdom = reportVdomFilter?.value || "";
+    const severity = reportSeverityFilter?.value || "";
+    const rows = reportRows(activeReportSection).filter((row) => {
+      if (vdom && row.vdom !== vdom) return false;
+      if (severity && row.severity !== severity) return false;
+      return !search || Object.values(row).some((value) =>
+        formatCell(value).toLowerCase().includes(search));
     });
-    syncWorkspace();
+
+    const headRow = document.createElement("tr");
+    columns.forEach(([, label]) => {
+      const th = document.createElement("th");
+      th.scope = "col";
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+    reportTableHead?.replaceChildren(headRow);
+
+    const fragment = document.createDocumentFragment();
+    rows.forEach((row) => {
+      const tr = document.createElement("tr");
+      columns.forEach(([key]) => {
+        const td = document.createElement("td");
+        td.textContent = formatCell(row[key]);
+        if (columnKey === "interfaces" && key === "display_name") {
+          td.className = "report-topology-name";
+        }
+        tr.appendChild(td);
+      });
+      fragment.appendChild(tr);
+    });
+    reportTableBody?.replaceChildren(fragment);
+    reportEmpty?.classList.toggle("hidden", rows.length > 0);
+  }
+
+  function renderOverview() {
+    if (!currentReport || !reportSummary) return;
+    const summary = currentReport.summary || {};
+    const objects = summary.objects || {};
+    const severity = summary.validation?.severity_counts || {};
+    const objectTotal = count(objects.addresses) + count(objects.address_groups)
+      + count(objects.services) + count(objects.service_groups);
+    const stats = [
+      ["Interfaces", objects.interfaces], ["Policies", objects.policies],
+      ["Objects", objectTotal], ["Errors", severity.error],
+      ["Warnings", severity.warning],
+    ];
+    const fragment = document.createDocumentFragment();
+    stats.forEach(([label, value]) => {
+      const stat = document.createElement("div");
+      stat.className = "report-stat";
+      const number = document.createElement("strong");
+      number.textContent = String(count(value));
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      stat.append(number, caption);
+      fragment.appendChild(stat);
+    });
+    reportSummary.replaceChildren(fragment);
+    if (reportFilename) reportFilename.textContent = currentReport.filename || "";
+    if (reportVdomSummary) {
+      const vdoms = summary.vdoms || [];
+      reportVdomSummary.textContent = vdoms.length
+        ? `VDOMs: ${vdoms.join(", ")}`
+        : "No VDOM data found.";
+    }
+  }
+
+  function setReportSection(section) {
+    activeReportSection = section;
+    document.querySelectorAll("[data-report-section]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.reportSection === section);
+    });
+    const overview = section === "overview";
+    reportOverview?.classList.toggle("hidden", !overview);
+    reportData?.classList.toggle("hidden", overview);
+    reportObjectTabs?.classList.toggle("hidden", section !== "objects");
+    reportSeverityFilter?.classList.toggle("hidden", section !== "validation");
+    if (!overview) renderTable();
+  }
+
+  function renderReport() {
+    renderOverview();
+    if (reportVdomFilter) {
+      reportVdomFilter.replaceChildren();
+      const all = document.createElement("option");
+      all.value = "";
+      all.textContent = "All VDOMs";
+      reportVdomFilter.appendChild(all);
+      (currentReport?.summary?.vdoms || []).forEach((vdom) => {
+        const option = document.createElement("option");
+        option.value = vdom;
+        option.textContent = vdom;
+        reportVdomFilter.appendChild(option);
+      });
+    }
+    setReportSection(activeReportSection);
+  }
+
+  function setMode(mode) {
+    activeMode = mode;
+    const showingReport = mode === "report";
+    tabReport?.classList.toggle("active", showingReport);
+    tabExtract?.classList.toggle("active", !showingReport);
+    tabReport?.toggleAttribute("aria-current", showingReport);
+    tabExtract?.toggleAttribute("aria-current", !showingReport);
+    excelActionFooter?.classList.toggle("hidden", showingReport);
+    reportContainer?.classList.toggle("hidden", !showingReport || !currentReport);
+
+    if (pageTitle) {
+      pageTitle.textContent = showingReport
+        ? "FortiGate Configuration Report"
+        : "Export FortiGate Report";
+    }
+    if (pageDescription) {
+      pageDescription.textContent = showingReport
+        ? "Upload a FortiGate CLI backup and review the extracted configuration."
+        : "Upload once, then download the complete Excel workbook.";
+    }
+  }
+
+  function clearSource() {
+    reportController?.abort();
+    reportController = null;
+    currentFile = null;
+    currentReport = null;
+    sourceReady = false;
+
+    if (fileInput) fileInput.value = "";
+    selectedFileCard?.classList.add("hidden");
+    dropzone?.classList.remove("hidden");
+    setPreviewStatus("");
+    hideError();
+    resetCounts();
+    reportContainer?.classList.add("hidden");
+    if (reportSearch) reportSearch.value = "";
+    if (reportVdomFilter) reportVdomFilter.value = "";
+    if (reportSeverityFilter) reportSeverityFilter.value = "";
+    setBusy(false);
   }
 
   async function readJson(response, fallback) {
     const data = await response.json().catch(() => null);
     if (!response.ok || !data || data.success === false) {
-      throw new Error(data?.error || `${fallback} (HTTP ${response.status}).`);
+      throw new Error(data?.error || fallback);
     }
     return data;
   }
 
-  // =========================================================================
-  // 1. Mode Tab Switching (Package Export vs Direct Live Migration)
-  // =========================================================================
-  if (tabDownload) {
-    tabDownload.addEventListener("click", () => switchMode("download"));
-  }
-  if (tabLive) {
-    tabLive.addEventListener("click", () => switchMode("live"));
-  }
-  if (tabExtract) {
-    tabExtract.addEventListener("click", () => switchMode("extract"));
-  }
-
-  function switchMode(mode) {
-    if (!MODE_COPY[mode]) return;
-    if (liveOperationRunning && mode !== activeMode) return;
-    // The existing deployment endpoint provisions PAN-OS. Other targets remain
-    // available for downloadable bundles; the live form must reflect its target.
-    if (mode === "live" && activeMode !== "live") {
-      offlineTargetVendor = selectedTargetVendor;
-      selectedTargetVendor = "palo_alto";
-      resetDeployment();
-    } else if (mode !== "live" && activeMode === "live") {
-      selectedTargetVendor = offlineTargetVendor;
-      resetDeployment();
-    }
-    if (targetVendorSelect) targetVendorSelect.value = selectedTargetVendor;
-    updateTargetBundleDescriptions(selectedTargetVendor);
-    activeMode = mode;
-    [
-      [tabDownload, "download"],
-      [tabLive, "live"],
-      [tabExtract, "extract"],
-    ].forEach(([tab, tabMode]) => {
-      if (!tab) return;
-      const selected = mode === tabMode;
-      tab.classList.toggle("active", selected);
-      tab.setAttribute("aria-selected", selected ? "true" : "false");
-      tab.tabIndex = selected ? 0 : -1;
-    });
-
-    if (modeDownloadForm)
-      modeDownloadForm.classList.toggle("hidden", mode !== "download");
-    if (modeLiveForm) modeLiveForm.classList.toggle("hidden", mode !== "live");
-    if (modeExtractForm)
-      modeExtractForm.classList.toggle("hidden", mode !== "extract");
-    if (targetVendorGroup)
-      targetVendorGroup.classList.toggle("hidden", mode === "extract");
-    if (vendorSelectorGrid)
-      vendorSelectorGrid.classList.toggle("extract-mode", mode === "extract");
-    document
-      .getElementById("optimizer-controls")
-      ?.classList.toggle("hidden", mode === "extract");
-    setText("page-title", MODE_COPY[mode][0]);
-    setText("page-description", MODE_COPY[mode][1]);
-    syncWorkspace();
-
-    if (mode === "download") {
-      logToTerminal(
-        "[MODE] Switched to Package Export Mode (XML/CLI & Terraform Bundle).",
-        "term-system",
-      );
-    } else if (mode === "live") {
-      logToTerminal(
-        "[MODE] Switched to Direct Live Migration Engine (Target Pre-Flight & Live Push).",
-        "term-system",
-      );
-    } else {
-      logToTerminal(
-        "[MODE] Switched to Vendor-Neutral Excel Extraction.",
-        "term-system",
-      );
-    }
-  }
-
-  // =========================================================================
-  // 2. Ingestion Method Tabs (Upload File vs Live Device)
-  // =========================================================================
-  function switchIngestMethod(method) {
-    if (liveOperationRunning || activeIngestMethod === method) return;
-    if (method === "api" && !supportsLiveIngestion(selectedSourceVendor)) {
-      showToast(
-        "info",
-        "Live ingestion unavailable",
-        "This vendor does not have a live collector yet. Upload a configuration file instead.",
-      );
-      return;
-    }
-    activeIngestMethod = method;
-    clearSource();
-    [btnIngestFile, btnIngestApi].forEach((button, index) => {
-      if (!button) return;
-      const selected = method === (index === 0 ? "file" : "api");
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-selected", String(selected));
-      button.tabIndex = selected ? 0 : -1;
-    });
-    ingestFileContainer?.classList.toggle("hidden", method !== "file");
-    ingestApiContainer?.classList.toggle("hidden", method !== "api");
-    logToTerminal(
-      `[INGEST] Switched to ${method === "file" ? "configuration upload" : "FortiGate SSH extraction"}.`,
-      "term-system",
-    );
-  }
-
-  btnIngestFile?.addEventListener("click", () => switchIngestMethod("file"));
-  btnIngestApi?.addEventListener("click", () => switchIngestMethod("api"));
-
-  function enableTabKeys(tabs) {
-    const available = tabs.filter(Boolean);
-    available.forEach((tab) =>
-      tab.addEventListener("keydown", (event) => {
-        if (
-          ![
-            "ArrowLeft",
-            "ArrowRight",
-            "ArrowUp",
-            "ArrowDown",
-            "Home",
-            "End",
-          ].includes(event.key)
-        )
-          return;
-        event.preventDefault();
-        const index = available.indexOf(tab);
-        const next =
-          event.key === "Home"
-            ? 0
-            : event.key === "End"
-              ? available.length - 1
-              : (index +
-                  (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1) +
-                  available.length) %
-                available.length;
-        if (available[next].disabled) return;
-        available[next].focus();
-        available[next].click();
-      }),
-    );
-  }
-  enableTabKeys([tabDownload, tabExtract, tabLive]);
-  enableTabKeys([btnIngestFile, btnIngestApi]);
-
-  // =========================================================================
-  // 3. Vendor Selector Dropdowns
-  // =========================================================================
-  if (sourceVendorSelect) {
-    selectedSourceVendor = sourceVendorSelect.value || "fortigate";
-    sourceVendorSelect.addEventListener("change", (e) => {
-      selectedSourceVendor = e.target.value;
-      clearSource();
-      const vendorName =
-        sourceVendorSelect.options[sourceVendorSelect.selectedIndex]?.text ||
-        selectedSourceVendor;
-      logToTerminal(
-        `[VENDOR] Source vendor selected: ${vendorName}`,
-        "term-system",
-      );
-
-      const cfg = VENDOR_CONFIGS[selectedSourceVendor];
-      if (cfg) {
-        if (dropzoneSubtext) dropzoneSubtext.innerHTML = cfg.dropText;
-        if (fileInput) fileInput.accept = cfg.fileAccept;
-      }
-
-      renderApiCredentialFields(selectedSourceVendor);
-      syncLiveIngestCapability();
-      syncWorkspace();
-    });
-  }
-
-  if (targetVendorSelect) {
-    selectedTargetVendor = targetVendorSelect.value || "palo_alto";
-    targetVendorSelect.addEventListener("change", (e) => {
-      selectedTargetVendor = e.target.value;
-      resetDeployment();
-      const targetName =
-        targetVendorSelect.options[targetVendorSelect.selectedIndex]?.text ||
-        selectedTargetVendor;
-      logToTerminal(
-        `[VENDOR] Target platform selected: ${targetName}`,
-        "term-system",
-      );
-      updateTargetBundleDescriptions(selectedTargetVendor);
-      syncWorkspace();
-    });
-  }
-
-  function updateTargetBundleDescriptions(target) {
-    const panDesc = document.getElementById("feature-card-pan-desc");
-    const tfDesc = document.getElementById("feature-card-tf-desc");
-    const auditDesc = document.getElementById("feature-card-audit-desc");
-
-    if (target === "fortigate") {
-      if (panDesc)
-        panDesc.innerHTML =
-          "Native <code>fortigate_config.conf</code> script for FortiOS CLI execution";
-      if (tfDesc)
-        tfDesc.innerHTML =
-          "Production HCL targeting <code>fortinetdev/fortios</code> (<code>main.tf</code>, <code>variables.tf</code>)";
-    } else if (target === "cisco_asa") {
-      if (panDesc)
-        panDesc.innerHTML =
-          "Native <code>cisco_asa_config.cfg</code> CLI commands for ASA / Firepower import";
-      if (tfDesc)
-        tfDesc.innerHTML =
-          "Production HCL targeting <code>CiscoDevNet/ciscoasa</code> (<code>main.tf</code>, <code>variables.tf</code>)";
-    } else if (target === "checkpoint") {
-      if (panDesc)
-        panDesc.innerHTML =
-          "Native <code>checkpoint_mgmt_cli.sh</code> automation script for Check Point MDS";
-      if (tfDesc)
-        tfDesc.innerHTML =
-          "Production HCL targeting <code>CheckPointSW/checkpoint</code> (<code>main.tf</code>, <code>variables.tf</code>)";
-    } else if (target === "juniper_srx") {
-      if (panDesc)
-        panDesc.innerHTML =
-          "Native <code>junos_srx_config.set</code> batch configuration syntax";
-      if (tfDesc)
-        tfDesc.innerHTML =
-          "Production HCL targeting <code>juniper/junos</code> (<code>main.tf</code>, <code>variables.tf</code>)";
-    } else {
-      if (panDesc)
-        panDesc.innerHTML =
-          "Native <code>palo_alto_config.xml</code> ready for Panorama / Firewall WebGUI import";
-      if (tfDesc)
-        tfDesc.innerHTML =
-          "Production HCL targeting <code>PaloAltoNetworks/panos</code> (<code>main.tf</code>, <code>terraform.tfvars</code>)";
-    }
-  }
-
-  // =========================================================================
-  // 4. Dynamic API Credential Form Generator
-  // =========================================================================
-  function renderApiCredentialFields(vendorId) {
-    if (!apiCredentialFields) return;
-    const config = VENDOR_CONFIGS[vendorId] || VENDOR_CONFIGS["fortigate"];
-
-    // Build HTML for fields
-    let html = "";
-
-    // If vendor supports multiple auth types, render an auth switcher
-    if (config.authTypes && config.authTypes.length > 1) {
-      html += `
-                <div class="form-group col-12">
-                    <label>Authentication Method</label>
-                    <div class="radio-toggle" id="api-auth-toggle-group">
-                        ${config.authTypes
-                          .map(
-                            (at, idx) => `
-                            <label class="radio-label">
-                                <input type="radio" name="api-auth-type" value="${at.id}" ${idx === 0 ? "checked" : ""}>
-                                <span>${at.label}</span>
-                            </label>
-                        `,
-                          )
-                          .join("")}
-                    </div>
-                </div>
-            `;
-    }
-
-    // Render input fields
-    config.fields.forEach((field) => {
-      const colClass = field.col || "col-6";
-      const authFilter = field.authType
-        ? `data-auth-type="${field.authType}"`
-        : "";
-      const hideClass =
-        field.authType && field.authType !== config.authTypes?.[0]?.id
-          ? "hidden"
-          : "";
-
-      if (field.type === "checkbox") {
-        html += `
-                    <div class="form-group ${colClass} ${hideClass}" ${authFilter}>
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="${field.id}" ${field.checked ? "checked" : ""}>
-                            <span>${field.label}</span>
-                        </label>
-                    </div>
-                `;
-      } else if (field.type === "password") {
-        html += `
-                    <div class="form-group ${colClass} ${hideClass}" ${authFilter} id="group-${field.id}">
-                        <label for="${field.id}">${field.label} ${field.required ? '<span class="req">*</span>' : ""}</label>
-                        <div class="password-wrapper">
-                            <input type="password" id="${field.id}" placeholder="${field.placeholder || ""}" ${field.required ? "required" : ""}>
-                            <button type="button" class="btn-toggle-password" data-target="${field.id}" aria-label="Show password" aria-pressed="false">Show</button>
-                        </div>
-                    </div>
-                `;
-      } else {
-        html += `
-                    <div class="form-group ${colClass} ${hideClass}" ${authFilter} id="group-${field.id}">
-                        <label for="${field.id}">${field.label} ${field.required ? '<span class="req">*</span>' : ""}</label>
-                        <input type="${field.type}" id="${field.id}" value="${field.value !== undefined ? field.value : ""}" placeholder="${field.placeholder || ""}" ${field.required ? "required" : ""}>
-                    </div>
-                `;
-      }
-    });
-
-    apiCredentialFields.innerHTML = html;
-
-    // Wire up auth radio toggle if present
-    const authRadios = apiCredentialFields.querySelectorAll(
-      'input[name="api-auth-type"]',
-    );
-    authRadios.forEach((radio) => {
-      radio.addEventListener("change", (e) => {
-        if (currentLiveCollectionId || busyButtons.has(btnApiExtract))
-          clearSource();
-        const selectedAuth = e.target.value;
-        apiCredentialFields
-          .querySelectorAll("[data-auth-type]")
-          .forEach((el) => {
-            if (el.getAttribute("data-auth-type") === selectedAuth) {
-              el.classList.remove("hidden");
-            } else {
-              el.classList.add("hidden");
-            }
-          });
-      });
-    });
-
-    // Clear validation errors on typing
-    apiCredentialFields.querySelectorAll("input").forEach((inp) => {
-      inp.addEventListener("input", () => {
-        inp.classList.remove("input-invalid");
-        inp.removeAttribute("aria-invalid");
-        const parent = inp.closest(".form-group") || inp.parentElement;
-        const err = parent.querySelector(".field-error-text");
-        if (err) err.remove();
-        if (currentLiveCollectionId || busyButtons.has(btnApiExtract))
-          clearSource();
-      });
-    });
-  }
-
-  // Initial render for default vendor
-  renderApiCredentialFields(selectedSourceVendor);
-  syncLiveIngestCapability();
-
-  // =========================================================================
-  // 5. Live FortiGate SSH Ingestion Handler
-  // =========================================================================
-  if (btnApiExtract) {
-    btnApiExtract.addEventListener("click", async () => {
-      clearInputErrors();
-      hideApiIngestError();
-      hideError();
-
-      if (!supportsLiveIngestion(selectedSourceVendor)) {
-        showApiIngestError(
-          "Live device ingestion is currently supported for FortiGate only.",
-          VENDOR_CONFIGS[selectedSourceVendor]?.name || selectedSourceVendor,
-        );
-        return;
-      }
-
-      const hostEl = document.getElementById("api-host");
-      const portEl = document.getElementById("api-port");
-      const userEl = document.getElementById("api-username");
-      const passEl = document.getElementById("api-password");
-      const verifyHostKeyEl = document.getElementById("api-verify-host-key");
-
-      const host = hostEl ? hostEl.value.trim() : "";
-      const port = portEl ? parseInt(portEl.value.trim() || "22") : 22;
-      const username = userEl ? userEl.value.trim() : "";
-      const password = passEl ? passEl.value : "";
-
-      // Validation
-      if (!host) {
-        showInputError("api-host", "Host or IP address is required.");
-        showToast(
-          "error",
-          "Missing Host",
-          "Please specify a device IP address or hostname.",
-        );
-        return;
-      }
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        showInputError("api-port", "Enter a port between 1 and 65535.");
-        return;
-      }
-
-      let hasErr = false;
-      if (!username) {
-        showInputError("api-username", "SSH username is required.");
-        hasErr = true;
-      }
-      if (!password) {
-        showInputError("api-password", "SSH password is required.");
-        hasErr = true;
-      }
-      if (hasErr) {
-        showToast(
-          "error",
-          "Missing Credentials",
-          "Please provide the SSH username and password.",
-        );
-        return;
-      }
-
-      // Prepare Payload
-      const payload = {
-        host,
-        port,
-        username,
-        password,
-        verify_host_key: Boolean(verifyHostKeyEl?.checked),
-      };
-
-      clearSource();
-      const requestRevision = sourceRevision;
-      setBusy(btnApiExtract, true);
-      const btnText = btnApiExtract.querySelector(".btn-text");
-      const spinner = btnApiExtract.querySelector(".spinner");
-      if (btnText) btnText.textContent = `Connecting to ${host}:${port}...`;
-      if (spinner) spinner.classList.remove("hidden");
-      if (apiIngestSuccess) apiIngestSuccess.classList.add("hidden");
-
-      const vendorName =
-        VENDOR_CONFIGS[selectedSourceVendor]?.name || selectedSourceVendor;
-      logToTerminal(
-        `[INGEST] Connecting to ${vendorName} over SSH (${host}:${port})...`,
-        "term-system",
-      );
-
-      try {
-        const resp = await fetch("/api/source/fortigate/pull", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await readJson(
-          resp,
-          `Failed to extract configuration from ${vendorName}`,
-        );
-        if (requestRevision !== sourceRevision) return;
-        if (!data.collection_id || !data.complete)
-          throw new Error(
-            "The server did not return a complete source collection. Please reconnect.",
-          );
-        const stats = data.stats || {};
-
-        currentLiveCollectionId = data.collection_id;
-        currentFile = null; // Clear active file
-        sourceReady = true;
-        sourceFailed = false;
-
-        if (apiHostname)
-          apiHostname.textContent = `${data.hostname || host} (Live Connected)`;
-        if (apiStatsSummary) {
-          apiStatsSummary.textContent = `${stats.interfaces || 0} interfaces • ${stats.addresses || 0} addresses • ${stats.policies || 0} policies • ${stats.nat_rules || 0} NAT rules`;
-        }
-        if (apiIngestSuccess) apiIngestSuccess.classList.remove("hidden");
-        hideApiIngestError();
-
-        showToast(
-          "success",
-          "Extraction Successful",
-          `Pulled complete configuration from ${vendorName} '${data.hostname || host}'`,
-        );
-        logToTerminal(
-          `[INGEST] Pulled running configuration from '${data.hostname || host}' (${stats.interfaces || 0} interfaces, ${stats.policies || 0} policies).`,
-          "term-success",
-        );
-
-        setPreviewStatus(
-          "Complete source snapshot pulled. Download the source inventory workbook to continue.",
-          "ready",
-        );
-      } catch (err) {
-        if (requestRevision !== sourceRevision) return;
-        currentLiveCollectionId = null;
-        if (apiIngestSuccess) apiIngestSuccess.classList.add("hidden");
-        if (!currentFile) {
-          if (btnGenerateBundle) btnGenerateBundle.disabled = true;
-          if (btnExtractExcel) btnExtractExcel.disabled = true;
-          if (btnPlanDryrun) btnPlanDryrun.disabled = true;
-        }
-        showApiIngestError(err.message, vendorName);
-        logToTerminal(
-          `[ERROR] Live SSH extraction failed: ${err.message}`,
-          "term-error",
-        );
-      } finally {
-        setBusy(btnApiExtract, false);
-        if (btnText)
-          btnText.textContent = "Connect & Pull Running Configuration";
-        if (spinner) spinner.classList.add("hidden");
-      }
-    });
-  }
-
-  if (btnClearApiIngest) {
-    btnClearApiIngest.addEventListener("click", () => {
-      clearSource();
-      logToTerminal("[INGEST] Live SSH collection cleared.", "term-system");
-    });
-  }
-
-  if (btnDismissApiError) {
-    btnDismissApiError.addEventListener("click", hideApiIngestError);
-  }
-
-  // =========================================================================
-  // 6. File Dropzone & Handling
-  // =========================================================================
-  if (dropzone && fileInput) {
-    ["dragenter", "dragover", "dragleave", "drop"].forEach((evt) => {
-      dropzone.addEventListener(evt, preventDefaults, false);
-    });
-
-    function preventDefaults(e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-
-    ["dragenter", "dragover"].forEach((evt) => {
-      dropzone.addEventListener(
-        evt,
-        () => dropzone.classList.add("dragover"),
-        false,
-      );
-    });
-
-    ["dragleave", "drop"].forEach((evt) => {
-      dropzone.addEventListener(
-        evt,
-        () => dropzone.classList.remove("dragover"),
-        false,
-      );
-    });
-
-    dropzone.addEventListener("drop", (e) => {
-      const dt = e.dataTransfer;
-      if (dt?.files?.length > 1) {
-        showToast(
-          "info",
-          "One configuration at a time",
-          "Select a single configuration file to continue.",
-        );
-        return;
-      }
-      if (dt && dt.files && dt.files.length) handleFileSelect(dt.files[0]);
-    });
-
-    dropzone.addEventListener("click", (e) => {
-      if (e.target !== fileInput && !e.target.closest("button")) {
-        fileInput.click();
-      }
-    });
-    dropzone.addEventListener("keydown", (event) => {
-      if (
-        (event.key === "Enter" || event.key === " ") &&
-        event.target === dropzone
-      ) {
-        event.preventDefault();
-        fileInput.click();
-      }
-    });
-
-    fileInput.addEventListener("change", function () {
-      if (this.files.length) handleFileSelect(this.files[0]);
-    });
-  }
-
-  function handleFileSelect(file) {
-    if (!file || liveOperationRunning) return;
-    if (!file.size) {
-      showToast(
-        "error",
-        "Empty configuration",
-        "This file is empty. Choose a configuration export that contains data.",
-      );
-      if (fileInput) fileInput.value = "";
-      return;
-    }
-    clearSource();
-    currentFile = file;
-    currentLiveCollectionId = null;
-
-    if (selectedFilename) selectedFilename.textContent = file.name;
-    if (selectedFilesize) selectedFilesize.textContent = formatBytes(file.size);
-
-    if (dropzone) dropzone.classList.add("hidden");
-    if (selectedFileCard) selectedFileCard.classList.remove("hidden");
-    hideError();
-
-    syncWorkspace();
-    logToTerminal(
-      `[FILE] Loaded '${file.name}' (${formatBytes(file.size)}). Ready for processing.`,
-      "term-system",
-    );
-
-    fetchMigrationPreview();
-  }
-
-  if (btnRemoveFile) {
-    btnRemoveFile.addEventListener("click", () => {
-      clearSource();
-      logToTerminal("[FILE] Configuration file unloaded.", "term-system");
-    });
-  }
-
-  function clearSource() {
-    currentFile = null;
-    currentLiveCollectionId = null;
-    if (fileInput) fileInput.value = "";
-    selectedFileCard?.classList.add("hidden");
-    dropzone?.classList.remove("hidden");
-    apiIngestSuccess?.classList.add("hidden");
-    hideApiIngestError();
-    hideError();
-    resetPreview();
-  }
-
-  // =========================================================================
-  // 7. Migration Intelligence Preview
-  // =========================================================================
-  async function fetchMigrationPreview() {
-    if (!currentFile) return;
-    previewController?.abort();
+  async function previewFile(file) {
+    reportController?.abort();
     const controller = new AbortController();
-    previewController = controller;
-    const requestRevision = sourceRevision;
+    reportController = controller;
     sourceReady = false;
-    sourceFailed = false;
-    currentPreviewId = null;
+    currentReport = null;
+    setBusy(false);
+    hideError();
     setPreviewStatus(
-      "Reading your configuration and preparing the inventory…",
+      "Reading the FortiGate configuration and preparing the inventory…",
       "loading",
     );
-    syncWorkspace();
 
     const formData = new FormData();
-    if (currentFile) {
-      formData.append("file", currentFile);
-    }
-    formData.append("source_vendor", selectedSourceVendor);
+    formData.append("file", file);
 
     try {
-      const resp = await fetch("/api/preview", {
+      const response = await fetch("/api/report", {
         method: "POST",
         body: formData,
         signal: controller.signal,
       });
-      const data = await readJson(resp, "Could not read this configuration");
-      if (requestRevision !== sourceRevision) return;
-      currentPreviewId = data.preview_id || null;
-      const stats = data.stats || {};
-      if (optimizerPanel) optimizerPanel.classList.remove("hidden");
-      if (statTotalRules) statTotalRules.textContent = count(stats.policies);
-      if (statTotalObjects)
-        statTotalObjects.textContent =
-          count(stats.addresses) + count(stats.services);
-      setText("inventory-interface-count", count(stats.interfaces));
-      setText("inventory-policy-count", count(stats.policies));
-      currentPolicies = Array.isArray(data.policies) ? data.policies : [];
+
+      const data = await readJson(
+        response,
+        "Could not read this FortiGate configuration.",
+      );
+
+      const summary = data.summary || {};
+      const objects = summary.objects || {};
+      const validation = summary.validation || {};
+      const severity = validation.severity_counts || {};
+
+      const policies = count(objects.policies);
+      const addresses = count(objects.addresses);
+      const addressGroups = count(objects.address_groups);
+      const services = count(objects.services);
+      const serviceGroups = count(objects.service_groups);
+      const objectTotal =
+        addresses + addressGroups + services + serviceGroups;
+
+      setText("validation-error-count", count(severity.error));
+      setText("validation-warning-count", count(severity.warning));
+      setText("stat-total-rules", policies);
+      setText("stat-total-objects", objectTotal);
+
+      inventorySummary?.classList.remove("hidden");
+      currentReport = data;
       sourceReady = true;
-      const itemCount = Object.values(stats).reduce(
-        (total, value) => total + count(value),
-        0,
-      );
+      renderReport();
+      setMode(activeMode);
       setPreviewStatus(
-        itemCount
-          ? "Configuration read. Review the inventory before continuing."
-          : "No supported objects were found. Review the source file and extraction warnings in the Excel workbook.",
-        itemCount ? "ready" : "empty",
+        "Configuration parsed successfully. The report is ready.",
+        "ready",
       );
-    } catch (err) {
-      if (err.name === "AbortError" || requestRevision !== sourceRevision)
-        return;
+      setBusy(false);
+    } catch (error) {
+      if (error.name === "AbortError") return;
       sourceReady = false;
-      sourceFailed = true;
-      setPreviewStatus(err.message, "error");
-      showError(`Configuration preview failed: ${err.message}`);
-      setText("summary-state", "Could not read source");
+      currentReport = null;
+      setBusy(false);
+      setPreviewStatus(error.message, "error");
+      showError(`Configuration report failed: ${error.message}`);
     } finally {
-      if (requestRevision === sourceRevision) {
-        previewController = null;
-        syncWorkspace();
-        if (!sourceReady) {
-          setText("summary-state", "Review source file");
-        }
-      }
+      if (reportController === controller) reportController = null;
     }
   }
 
-  // =========================================================================
-  // 8. Mode A: Export Target Migration Bundle (.zip)
-  // =========================================================================
-  if (btnGenerateBundle) {
-    btnGenerateBundle.addEventListener("click", async () => {
-      if (!currentFile) {
-        showToast(
-          "info",
-          "No Input",
-          "Please upload a configuration file first. Live collections are available for Excel extraction only.",
+  function handleFile(file) {
+    if (!file) return;
+
+    if (!file.size) {
+      showError("The selected configuration file is empty.");
+      return;
+    }
+
+    currentFile = file;
+    sourceReady = false;
+    hideError();
+
+    if (selectedFilename) selectedFilename.textContent = file.name;
+    if (selectedFilesize) selectedFilesize.textContent = formatBytes(file.size);
+
+    dropzone?.classList.add("hidden");
+    selectedFileCard?.classList.remove("hidden");
+    previewFile(file);
+  }
+
+  async function saveBlob(blob, filename) {
+    if (window.pywebview?.api?.save_file_dialog) {
+      const buffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      const chunkSize = 0x8000;
+
+      for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+        binary += String.fromCharCode(
+          ...bytes.subarray(offset, offset + chunkSize),
         );
-        return;
       }
 
-      setBusy(btnGenerateBundle, true);
-      const exportSource = selectedSourceVendor;
-      const exportTarget = selectedTargetVendor;
-      const btnText = btnGenerateBundle.querySelector("span:last-child");
-      const originalText = btnText
-        ? btnText.textContent
-        : "Generate Migration Bundle (.zip)";
-      if (btnText) btnText.textContent = "Compiling Migration Package...";
-      hideError();
-
-      const formData = new FormData();
-      if (currentFile) {
-        formData.append("file", currentFile);
-      }
-      formData.append("source_vendor", selectedSourceVendor);
-      formData.append("target_vendor", selectedTargetVendor);
-      formData.append(
-        "optimize",
-        optPruneObjects
-          ? optPruneObjects.checked
-            ? "true"
-            : "false"
-          : "false",
+      const result = await window.pywebview.api.save_file_dialog(
+        filename,
+        btoa(binary),
       );
 
-      logToTerminal(
-        `[EXPORT] Compiling ${selectedSourceVendor} -> ${selectedTargetVendor} migration bundle...`,
-        "term-system",
-      );
-
-      try {
-        const resp = await fetch("/api/migrate", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}));
-          const blockingReasons = Array.isArray(errData.blocking_reasons)
-            ? errData.blocking_reasons.filter(Boolean)
-            : [];
-          blockingReasons.forEach((reason) =>
-            logToTerminal(`[SAFETY] ${reason}`, "term-error"),
-          );
-          const detail = blockingReasons.length
-            ? ` ${blockingReasons[0]}${
-                blockingReasons.length > 1
-                  ? ` (+${blockingReasons.length - 1} more)`
-                  : ""
-              }`
-            : "";
-          throw new Error(
-            `${errData.error || "Failed to generate package"}${detail}`,
-          );
-        }
-
-        const blob = await resp.blob();
-        const saved = await downloadBlob(
-          blob,
-          `migration_${exportSource}_to_${exportTarget}.zip`,
-        );
-        if (saved) {
-          showToast(
-            "success",
-            "Bundle Generated",
-            `Your migration bundle for ${VENDOR_CONFIGS[exportTarget]?.name || exportTarget} is ready.`,
-          );
-          logToTerminal(
-            `[EXPORT] Generated migration_${exportSource}_to_${exportTarget}.zip`,
-            "term-success",
-          );
-        }
-      } catch (err) {
-        showError(err.message);
-        showToast("error", "Export Failed", err.message);
-        logToTerminal(
-          `[ERROR] Bundle generation failed: ${err.message}`,
-          "term-error",
-        );
-      } finally {
-        setBusy(btnGenerateBundle, false);
-        if (btnText) btnText.textContent = originalText;
-      }
-    });
-  }
-
-  // =========================================================================
-  // 8b. Vendor-neutral Excel source inventory
-  // =========================================================================
-  if (btnExtractExcel) {
-    btnExtractExcel.addEventListener("click", async () => {
-      if (!currentFile && !currentLiveCollectionId) {
-        showToast(
-          "info",
-          "No Input",
-          "Please upload a configuration file or pull a complete FortiGate SSH collection first.",
-        );
-        return;
-      }
-
-      setBusy(btnExtractExcel, true);
-      const exportSource = selectedSourceVendor;
-      const btnText = btnExtractExcel.querySelector("span:last-child");
-      const originalText = btnText
-        ? btnText.textContent
-        : "Download Source Inventory (.xlsx)";
-      if (btnText) btnText.textContent = "Building Source Inventory...";
-      hideError();
-
-      const formData = new FormData();
-      if (currentFile) {
-        formData.append("file", currentFile);
-        formData.append("source_vendor", selectedSourceVendor);
-      }
-      if (currentPreviewId) formData.append("preview_id", currentPreviewId);
-      formData.append("excel_profile", "fast");
-
-      try {
-        const live = !currentFile && currentLiveCollectionId;
-        const resp = live
-          ? await fetch("/api/source/fortigate/extract/excel", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ collection_id: currentLiveCollectionId }),
-            })
-          : await fetch("/api/extract/excel", {
-              method: "POST",
-              body: formData,
-            });
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}));
-          throw new Error(
-            errData.error || "Failed to generate Excel inventory",
-          );
-        }
-        const blob = await resp.blob();
-        const saved = await downloadBlob(
-          blob,
-          `firewall_inventory_${exportSource}.xlsx`,
-        );
-        if (saved)
-          showToast(
-            "success",
-            "Inventory Generated",
-            "Your source inventory workbook is ready.",
-          );
-      } catch (err) {
-        showError(err.message);
-        showToast("error", "Excel Export Failed", err.message);
-      } finally {
-        setBusy(btnExtractExcel, false);
-        if (btnText) btnText.textContent = originalText;
-      }
-    });
-  }
-
-  // =========================================================================
-  // 9. Mode B: Target Authentication Switcher & Diagnostics
-  // =========================================================================
-  radioAuthTypes.forEach((radio) => {
-    radio.addEventListener("change", (e) => {
-      resetDeployment();
-      if (e.target.value === "apikey") {
-        if (authApikeyGroup) authApikeyGroup.classList.remove("hidden");
-        if (authUserGroup) authUserGroup.classList.add("hidden");
-        if (authPassGroup) authPassGroup.classList.add("hidden");
-      } else {
-        if (authApikeyGroup) authApikeyGroup.classList.add("hidden");
-        if (authUserGroup) authUserGroup.classList.remove("hidden");
-        if (authPassGroup) authPassGroup.classList.remove("hidden");
-      }
-    });
-  });
-
-  document.addEventListener("click", (event) => {
-    const button = event.target.closest(".btn-toggle-password");
-    if (!button) return;
-    const input = document.getElementById(button.dataset.target);
-    if (!input) return;
-    const visible = input.type === "password";
-    input.type = visible ? "text" : "password";
-    button.textContent = visible ? "Hide" : "Show";
-    button.setAttribute(
-      "aria-label",
-      visible ? "Hide password" : "Show password",
-    );
-    button.setAttribute("aria-pressed", String(visible));
-  });
-  [panHost, panPort, panApikey, panUser, panPass, panInsecure].forEach(
-    (element) => {
-      element?.addEventListener("input", () => {
-        resetDeployment();
-        element.classList.remove("input-invalid");
-        element.removeAttribute("aria-invalid");
-        element
-          .closest(".form-group")
-          ?.querySelector(".field-error-text")
-          ?.remove();
-      });
-    },
-  );
-
-  if (btnRunDiagnostics) {
-    btnRunDiagnostics.addEventListener("click", async () => {
-      const host = panHost ? panHost.value.trim() : "";
-      const port = panPort ? parseInt(panPort.value.trim() || "443") : 443;
-      const authType =
-        document.querySelector('input[name="auth-type"]:checked')?.value ||
-        "apikey";
-      const apiKey = panApikey ? panApikey.value.trim() : "";
-      const username = panUser ? panUser.value.trim() : "";
-      const password = panPass ? panPass.value.trim() : "";
-      const verifySsl = panInsecure ? !panInsecure.checked : true;
-
-      logToTerminal(
-        `[DIAGNOSTICS] Probing environment and target diagnostics (${host}:${port})...`,
-        "term-system",
-      );
-      btnRunDiagnostics.disabled = true;
-      setDiagLoadingAll();
-
-      try {
-        const payload = {
-          host,
-          port,
-          verify_ssl: verifySsl,
-          auto_download_tf: true,
-        };
-
-        if (authType === "apikey") {
-          payload.api_key = apiKey;
-        } else {
-          payload.username = username;
-          payload.password = password;
-        }
-
-        const resp = await fetch("/api/diagnostics", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-
-        const data = await readJson(resp, "Diagnostics failed");
-        if (!Array.isArray(data.results))
-          throw new Error("The server returned no diagnostic results.");
-        data.results.forEach((res) => {
-          updateDiagCard(res.name, res.status, res.message);
-          logToTerminal(
-            `[DIAGNOSTICS] ${res.name.toUpperCase()}: ${res.status.toUpperCase()} - ${res.message}`,
-            res.status === "ok"
-              ? "term-success"
-              : res.status === "error"
-                ? "term-error"
-                : "term-system",
-          );
-        });
-        showToast(
-          "info",
-          "Diagnostics Complete",
-          "Environment and line-of-sight checks finished.",
-        );
-      } catch (err) {
-        document.querySelectorAll(".diag-card.running").forEach((card) => {
-          card.className = "diag-card failed";
-          const message = card.querySelector(".diag-msg");
-          if (message) message.textContent = "Unable to complete check";
-        });
-        showError(`Diagnostics error: ${err.message}`);
-        logToTerminal(
-          `[ERROR] Diagnostics failed: ${err.message}`,
-          "term-error",
-        );
-      } finally {
-        btnRunDiagnostics.disabled = false;
-        document.querySelectorAll(".diag-card.running").forEach((card) => {
-          card.className = "diag-card pending";
-          const message = card.querySelector(".diag-msg");
-          if (message) message.textContent = "No result returned";
-        });
-      }
-    });
-  }
-
-  function setDiagLoadingAll() {
-    ["diag-tf-local", "diag-tf-reg", "diag-tcp", "diag-panos"].forEach((id) => {
-      const card = document.getElementById(id);
-      if (card) {
-        card.className = "diag-card running";
-        const msg = document.getElementById(`${id}-msg`);
-        if (msg) msg.textContent = "Probing...";
-      }
-    });
-  }
-
-  function updateDiagCard(name, status, msg) {
-    let cardId = "diag-tf-local";
-    if (name === "terraform_cli") cardId = "diag-tf-local";
-    else if (name === "registry_access") cardId = "diag-tf-reg";
-    else if (name === "palo_alto_line_of_sight") cardId = "diag-tcp";
-    else if (name === "palo_alto_auth") cardId = "diag-panos";
-
-    const card = document.getElementById(cardId);
-    const msgEl = document.getElementById(`${cardId}-msg`);
-
-    if (card) {
-      const cardClass =
-        status === "ok" ? "success" : status === "error" ? "failed" : "pending";
-      card.className = `diag-card ${cardClass}`;
-    }
-    if (msgEl) {
-      msgEl.textContent = msg;
-    }
-  }
-
-  // =========================================================================
-  // 10. Mode B: Step 1 - Execute Dry-Run Plan (`terraform plan`)
-  // =========================================================================
-  if (btnPlanDryrun) {
-    btnPlanDryrun.addEventListener("click", async () => {
-      if (!currentFile) {
-        showToast(
-          "error",
-          "No Configuration",
-          "Please upload a configuration file first. Live collections are not supported for deployment planning.",
-        );
-        return;
-      }
-
-      const host = panHost ? panHost.value.trim() : "";
-      if (!host) {
-        showInputError(
-          "pan-host",
-          "Target Hostname or IP is required for Live Apply.",
-        );
-        showToast(
-          "error",
-          "Missing Target Host",
-          "Please specify target firewall management IP.",
-        );
-        return;
-      }
-
-      resetDeployment();
-      setBusy(btnPlanDryrun, true);
-      setLiveOperationRunning(true);
-      if (planStatusMsg)
-        planStatusMsg.textContent =
-          "Preparing the workspace and calculating a dry-run plan…";
-      logToTerminal(
-        `[PREPARE] Initializing deployment sandbox for ${selectedSourceVendor} -> ${selectedTargetVendor}...`,
-        "term-system",
-      );
-
-      const formData = new FormData();
-      if (currentFile) {
-        formData.append("file", currentFile);
-      }
-
-      formData.append("source_vendor", selectedSourceVendor);
-      formData.append("target_vendor", selectedTargetVendor);
-      formData.append("host", host);
-      formData.append("port", panPort ? panPort.value.trim() : "443");
-      formData.append("vsys", "vsys1");
-      formData.append("device_group", "shared");
-
-      const authType =
-        document.querySelector('input[name="auth-type"]:checked')?.value ||
-        "apikey";
-      if (authType === "apikey") {
-        formData.append("api_key", panApikey ? panApikey.value.trim() : "");
-      } else {
-        formData.append("username", panUser ? panUser.value.trim() : "");
-        formData.append("password", panPass ? panPass.value.trim() : "");
-      }
-
-      try {
-        // 1. Prepare Sandbox
-        const prepResp = await fetch("/api/terraform/prepare", {
-          method: "POST",
-          body: formData,
-        });
-        const prepData = await readJson(prepResp, "Preparation failed");
-        if (!prepData.session_id)
-          throw new Error("The server did not return a deployment session.");
-
-        currentSessionId = prepData.session_id;
-        logToTerminal(
-          `[PREPARE] Sandbox ${currentSessionId} ready. Running Terraform Init & Plan...`,
-          "term-system",
-        );
-
-        // 2. Run Terraform Plan
-        const planResp = await fetch("/api/terraform/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: currentSessionId }),
-        });
-
-        const planData = await planResp.json();
-        if (!planData.success) {
-          if (planData.init_log) logToTerminal(planData.init_log, "term-log");
-          if (planData.plan_log) logToTerminal(planData.plan_log, "term-log");
-          throw new Error(planData.error || "Terraform plan failed");
-        }
-
-        if (planData.init_log) logToTerminal(planData.init_log, "term-log");
-        if (planData.plan_log) logToTerminal(planData.plan_log, "term-log");
-
-        const summary = planData.summary || { add: 0, change: 0, destroy: 0 };
-        if (badgeAdd) badgeAdd.textContent = `+${summary.add} add`;
-        if (badgeChange) badgeChange.textContent = `~${summary.change} change`;
-        if (badgeDestroy)
-          badgeDestroy.textContent = `-${summary.destroy} destroy`;
-        if (planSummaryBadges) planSummaryBadges.classList.remove("hidden");
-
-        if (planStatusMsg)
-          planStatusMsg.textContent = `Plan verified (+${summary.add}, ~${summary.change}, -${summary.destroy}). Ready for Live Push.`;
-        if (btnApplyLive) btnApplyLive.disabled = false;
-
-        showToast(
-          "success",
-          "Plan Ready",
-          `Dry-run plan computed (+${summary.add}, ~${summary.change}, -${summary.destroy}).`,
-        );
-        logToTerminal(
-          `[PLAN] Plan complete: +${summary.add} to add, ~${summary.change} to change, -${summary.destroy} to destroy. Ready for Live Apply.`,
-          "term-success",
-        );
-      } catch (err) {
-        resetDeployment();
-        if (planStatusMsg)
-          planStatusMsg.textContent =
-            "Plan failed. Check the execution log and try again.";
-        showError(`Plan error: ${err.message}`);
-        logToTerminal(`[ERROR] Plan failed: ${err.message}`, "term-error");
-        showToast("error", "Plan Error", err.message);
-      } finally {
-        setLiveOperationRunning(false);
-        setBusy(btnPlanDryrun, false);
-      }
-    });
-  }
-
-  // =========================================================================
-  // 11. Mode B: Step 2 - Live Apply (`terraform apply` via SSE)
-  // =========================================================================
-  if (btnApplyLive) {
-    btnApplyLive.addEventListener("click", async () => {
-      if (!currentSessionId) {
-        showToast(
-          "error",
-          "No Active Plan",
-          "Please execute dry-run plan before applying changes.",
-        );
-        return;
-      }
-
-      const confirmApply = confirm(
-        "Are you sure you want to commit this configuration to the live firewall?",
-      );
-      if (!confirmApply) return;
-
-      btnApplyLive.disabled = true;
-      if (btnRollback) btnRollback.disabled = true;
-      setLiveOperationRunning(true);
-      try {
-        if (!sessionApproved) {
-          const approval = await fetch("/api/terraform/approve", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: currentSessionId }),
-          });
-          await readJson(approval, "The deployment plan could not be approved");
-          sessionApproved = true;
-        }
-      } catch (err) {
-        showError(err.message);
-        showToast("error", "Approval Failed", err.message);
-        btnApplyLive.disabled = false;
-        setLiveOperationRunning(false);
-        return;
-      }
-      if (applyStatusMsg)
-        applyStatusMsg.textContent =
-          "Deployment in progress. Follow the execution log below.";
-      logToTerminal(
-        "[APPLY] Commencing live Server-Sent Events (SSE) streaming...",
-        "term-system",
-      );
-
-      const evtSource = new EventSource(
-        `/api/terraform/apply/stream?session_id=${encodeURIComponent(currentSessionId)}`,
-      );
-
-      const finishApply = () => {
-        evtSource.close();
-        btnApplyLive.disabled = false;
-        if (btnRollback) btnRollback.disabled = false;
-        setLiveOperationRunning(false);
-      };
-
-      evtSource.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.event === "log") {
-            logToTerminal(data.line, "term-log");
-          } else if (data.event === "status") {
-            logToTerminal(`[STATUS] ${data.message}`, "term-system");
-          } else if (data.event === "complete") {
-            finishApply();
-            if (data.success) {
-              logToTerminal(`[SUCCESS] ${data.message}`, "term-success");
-              if (postActionsBar) postActionsBar.classList.remove("hidden");
-              if (applyStatusMsg)
-                applyStatusMsg.textContent =
-                  "Deployment committed successfully.";
-              showToast(
-                "success",
-                "Apply Complete",
-                "Terraform completed. Review the log and audit before validating the target.",
-              );
-            } else {
-              logToTerminal(`[FAILED] ${data.message}`, "term-error");
-              showError(data.message);
-            }
-          } else if (data.event === "error") {
-            finishApply();
-            logToTerminal(`[ERROR] ${data.message}`, "term-error");
-            showError(data.message);
-            if (applyStatusMsg)
-              applyStatusMsg.textContent =
-                "Deployment reported an error. Review the execution log.";
-          }
-        } catch (err) {
-          finishApply();
-          showError(
-            "The deployment stream returned an unreadable response. Check the target state before retrying.",
-          );
-        }
-      };
-
-      evtSource.onerror = () => {
-        finishApply();
-        logToTerminal(
-          "[ERROR] Live deployment event stream disconnected.",
-          "term-error",
-        );
-        if (applyStatusMsg)
-          applyStatusMsg.textContent =
-            "Connection interrupted. Target state is unknown; inspect it before retrying.";
-        showError(
-          "The live stream disconnected. The operation may still be running; check the target and server before retrying.",
-        );
-      };
-    });
-  }
-
-  // =========================================================================
-  // 12. Mode B: Step 3 - Emergency Rollback / Destroy
-  // =========================================================================
-  if (btnRollback) {
-    btnRollback.addEventListener("click", () => {
-      if (!currentSessionId) return;
-
-      const confirmDestroy = confirm(
-        "WARNING: This will DESTROY and remove all provisioned resources from the firewall. Proceed with rollback?",
-      );
-      if (!confirmDestroy) return;
-
-      btnRollback.disabled = true;
-      btnApplyLive.disabled = true;
-      setLiveOperationRunning(true);
-      if (rollbackStatusMsg)
-        rollbackStatusMsg.textContent =
-          "Removing managed resources. Follow the execution log below.";
-      logToTerminal(
-        "[ROLLBACK] Starting live terraform destroy streaming...",
-        "term-warning",
-      );
-
-      const evtSource = new EventSource(
-        `/api/terraform/destroy/stream?session_id=${encodeURIComponent(currentSessionId)}`,
-      );
-      const finishRollback = () => {
-        evtSource.close();
-        btnRollback.disabled = false;
-        btnApplyLive.disabled = false;
-        setLiveOperationRunning(false);
-      };
-
-      evtSource.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.event === "log") {
-            logToTerminal(data.line, "term-log");
-          } else if (data.event === "status") {
-            logToTerminal(`[STATUS] ${data.message}`, "term-system");
-          } else if (data.event === "complete") {
-            finishRollback();
-            if (data.success) {
-              logToTerminal(
-                `[ROLLBACK COMPLETE] ${data.message}`,
-                "term-warning",
-              );
-              if (rollbackStatusMsg)
-                rollbackStatusMsg.textContent =
-                  "Rollback finished. Managed resources removed.";
-              postActionsBar?.classList.add("hidden");
-              showToast(
-                "info",
-                "Rollback Finished",
-                "Terraform completed resource removal. Review the log to verify the result.",
-              );
-            } else {
-              if (rollbackStatusMsg)
-                rollbackStatusMsg.textContent =
-                  "Rollback failed. Review the execution log.";
-              showError(data.message || "Rollback failed.");
-            }
-          } else if (data.event === "error") {
-            finishRollback();
-            logToTerminal(`[ERROR] ${data.message}`, "term-error");
-            showError(data.message);
-          }
-        } catch (err) {
-          finishRollback();
-          showError(
-            "The rollback stream returned an unreadable response. Check the target state before retrying.",
-          );
-        }
-      };
-
-      evtSource.onerror = () => {
-        finishRollback();
-        logToTerminal("[ERROR] Rollback stream disconnected.", "term-error");
-        if (rollbackStatusMsg)
-          rollbackStatusMsg.textContent =
-            "Connection interrupted. Check the target state before retrying.";
-        showError(
-          "The rollback stream disconnected. The operation may still be running; check the target and server before retrying.",
-        );
-      };
-    });
-  }
-
-  // =========================================================================
-  // 13. Terminal Helpers (Clear, Copy, Log)
-  // =========================================================================
-  if (btnClearTerm) {
-    btnClearTerm.addEventListener("click", () => {
-      if (terminalStreamBody) {
-        terminalStreamBody.innerHTML =
-          '<div class="term-line term-system">[SYSTEM] Terminal logs cleared. Ready for operations.</div>';
-      }
-    });
-  }
-
-  if (btnCopyTerm) {
-    btnCopyTerm.addEventListener("click", () => {
-      if (!terminalStreamBody) return;
-      const text = terminalStreamBody.innerText;
-      if (!navigator.clipboard?.writeText) {
-        showToast(
-          "info",
-          "Clipboard unavailable",
-          "Select the log text and copy it using your keyboard.",
-        );
-        return;
-      }
-      navigator.clipboard
-        .writeText(text)
-        .then(() => {
-          showToast("info", "Copied", "Terminal log copied to clipboard");
-        })
-        .catch((err) => {
-          showToast(
-            "error",
-            "Could not copy",
-            "Select the log text and copy it using your keyboard.",
-          );
-        });
-    });
-  }
-
-  function logToTerminal(text, className = "term-log") {
-    if (!terminalStreamBody) return;
-    const line = document.createElement("div");
-    line.className = `term-line ${className}`;
-    line.textContent = text;
-    terminalStreamBody.appendChild(line);
-
-    if (termAutoscroll && termAutoscroll.checked) {
-      terminalStreamBody.scrollTop = terminalStreamBody.scrollHeight;
-    }
-  }
-
-  // =========================================================================
-  // 14. Post Actions & Downloads
-  // =========================================================================
-  if (btnDownloadState) {
-    btnDownloadState.addEventListener("click", async () => {
-      if (!currentSessionId) return;
-      try {
-        const resp = await fetch(
-          `/api/download/state?session_id=${currentSessionId}`,
-        );
-        if (!resp.ok) throw new Error("Failed to download state file");
-        const blob = await resp.blob();
-        await downloadBlob(blob, `terraform_${currentSessionId}.tfstate`);
-      } catch (err) {
-        showToast("error", "Download Failed", err.message);
-      }
-    });
-  }
-
-  if (btnDownloadAudit) {
-    btnDownloadAudit.addEventListener("click", async () => {
-      if (!currentSessionId) return;
-      try {
-        const resp = await fetch(
-          `/api/download/package?session_id=${currentSessionId}`,
-        );
-        if (!resp.ok) throw new Error("Failed to download package");
-        const blob = await resp.blob();
-        await downloadBlob(blob, `terraform_package_${currentSessionId}.zip`);
-      } catch (err) {
-        showToast("error", "Download Failed", err.message);
-      }
-    });
-  }
-
-  // =========================================================================
-  // 15. Feedback, Errors & Toast System
-  // =========================================================================
-  function clearInputErrors() {
-    document.querySelectorAll(".input-invalid").forEach((el) => {
-      el.classList.remove("input-invalid");
-      el.removeAttribute("aria-invalid");
-    });
-    document.querySelectorAll(".field-error-text").forEach((el) => el.remove());
-  }
-
-  function showInputError(elementId, message) {
-    const el = document.getElementById(elementId);
-    if (!el) return;
-    el.classList.add("input-invalid");
-    el.setAttribute("aria-invalid", "true");
-
-    const parent = el.closest(".form-group") || el.parentElement;
-    const existing = parent.querySelector(".field-error-text");
-    if (existing) existing.remove();
-
-    const err = document.createElement("div");
-    err.className = "field-error-text";
-    err.textContent = message;
-    err.id = `${elementId}-error`;
-    el.setAttribute("aria-describedby", err.id);
-
-    if (el.closest(".password-wrapper")) {
-      el.closest(".password-wrapper").insertAdjacentElement("afterend", err);
-    } else {
-      el.insertAdjacentElement("afterend", err);
-    }
-    el.focus();
-  }
-
-  function formatApiErrorMessage(errMessage, vendorName = "Firewall") {
-    const msg = (errMessage || "").toLowerCase();
-
-    if (
-      msg.includes("401") ||
-      msg.includes("403") ||
-      msg.includes("authentication failed") ||
-      msg.includes("login failed") ||
-      msg.includes("unauthorized") ||
-      msg.includes("forbidden")
-    ) {
-      return {
-        title: `${vendorName} Authentication Failed`,
-        detail: errMessage || "Invalid SSH username or password.",
-        hint: `💡 <strong>Troubleshooting:</strong> Verify your REST API token or admin credentials. Ensure the user profile has configuration read permissions.`,
-      };
-    }
-    if (
-      msg.includes("ssl") ||
-      msg.includes("certificate") ||
-      msg.includes("cert") ||
-      msg.includes("tlsv1")
-    ) {
-      return {
-        title: "SSH Host Key Verification Error",
-        detail: errMessage,
-        hint: `💡 <strong>Troubleshooting:</strong> If this firewall uses a self-signed HTTPS certificate, check <em>'Allow Self-Signed TLS Certificates'</em>.`,
-      };
-    }
-    if (
-      msg.includes("connection refused") ||
-      msg.includes("timed out") ||
-      msg.includes("timeout") ||
-      msg.includes("failed to reach") ||
-      msg.includes("name or service not known") ||
-      msg.includes("gaierror")
-    ) {
-      return {
-        title: `${vendorName} Host Unreachable`,
-        detail: errMessage,
-        hint: `💡 <strong>Troubleshooting:</strong> Check the host IP address and HTTPS port. Ensure line-of-sight and that management API access is enabled on the interface.`,
-      };
-    }
-    return {
-      title: `${vendorName} Connection Error`,
-      detail:
-        errMessage ||
-        "An unexpected error occurred while communicating with the device.",
-      hint: `💡 <strong>Troubleshooting:</strong> Check device connection parameters and network routing.`,
-    };
-  }
-
-  function showApiIngestError(errMessage, vendorName = "Firewall") {
-    if (!apiIngestError) return;
-    const parsed = formatApiErrorMessage(errMessage, vendorName);
-    if (apiErrorTitle) apiErrorTitle.textContent = parsed.title;
-    if (apiErrorDetail) apiErrorDetail.textContent = parsed.detail;
-    if (apiErrorHint) {
-      if (parsed.hint) {
-        apiErrorHint.innerHTML = parsed.hint;
-        apiErrorHint.classList.remove("hidden");
-      } else {
-        apiErrorHint.classList.add("hidden");
-      }
-    }
-    apiIngestError.classList.remove("hidden");
-    showToast("error", parsed.title, parsed.detail);
-  }
-
-  function hideApiIngestError() {
-    if (apiIngestError) apiIngestError.classList.add("hidden");
-  }
-
-  function showToast(type, title, msg, duration = 5000) {
-    if (!toastContainer) return;
-    const toast = document.createElement("div");
-    toast.className = `toast toast-${type}`;
-
-    const icons = {
-      error: "⚠️",
-      success: "✓",
-      info: "ℹ️",
-    };
-
-    toast.innerHTML = `
-            <div class="toast-icon">${icons[type] || "ℹ️"}</div>
-            <div class="toast-content" style="flex: 1;">
-                <div class="toast-title"></div>
-                <div class="toast-msg"></div>
-            </div>
-            <button class="toast-close" type="button" aria-label="Close">✕</button>
-        `;
-    toast.querySelector(".toast-title").textContent = title;
-    toast.querySelector(".toast-msg").textContent = msg;
-    toast.setAttribute("role", type === "error" ? "alert" : "status");
-
-    const removeToast = () => {
-      toast.style.opacity = "0";
-      toast.style.transform = "translateX(100%)";
-      toast.style.transition = "all 0.25s ease";
-      setTimeout(() => toast.remove(), 250);
-    };
-
-    const closeBtn = toast.querySelector(".toast-close");
-    if (closeBtn) closeBtn.addEventListener("click", removeToast);
-
-    setTimeout(removeToast, duration);
-    toastContainer.appendChild(toast);
-  }
-
-  function showError(msg) {
-    if (errorBanner) {
-      errorBanner.textContent = msg;
-      errorBanner.classList.remove("hidden");
-    }
-  }
-
-  function hideError() {
-    if (errorBanner) {
-      errorBanner.textContent = "";
-      errorBanner.classList.add("hidden");
-    }
-  }
-
-  function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-  }
-
-  async function downloadBlob(blob, filename) {
-    // 1. Check if running inside desktop app (pywebview)
-    if (
-      window.pywebview &&
-      window.pywebview.api &&
-      typeof window.pywebview.api.save_file_dialog === "function"
-    ) {
-      try {
-        const base64Data = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const res = reader.result;
-            const base64 = res.substring(res.indexOf(",") + 1);
-            resolve(base64);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
-        });
-
-        const res = await window.pywebview.api.save_file_dialog(
-          filename,
-          base64Data,
-        );
-        if (res && res.success) {
-          showToast(
-            "success",
-            "File Saved",
-            `Saved successfully to ${res.path}`,
-          );
-          logToTerminal(
-            `[SAVED] File saved successfully to: ${res.path}`,
-            "term-success",
-          );
-          return true;
-        } else if (res && res.cancelled) {
-          logToTerminal(
-            `[CANCELLED] File save cancelled by user.`,
-            "term-info",
-          );
-          return false;
-        } else if (res && res.error) {
-          showToast("error", "Save Failed", res.error);
-          logToTerminal(
-            `[ERROR] Failed to save file: ${res.error}`,
-            "term-error",
-          );
-        }
-        return false;
-      } catch (err) {
-        console.error(
-          "Desktop save dialog failed, falling back to browser download",
-          err,
-        );
-      }
+      return Boolean(result?.success);
     }
 
-    // 2. Standard Web Browser download fallback
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.style.display = "none";
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => window.URL.revokeObjectURL(url), 10000);
-    a.remove();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     return true;
   }
 
-  function escapeHtml(str) {
-    if (!str) return "";
-    return String(str)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
+  async function exportExcel() {
+    if (!currentFile || !sourceReady) return;
 
-  document
-    .getElementById("btn-new-workspace")
-    ?.addEventListener("click", () => {
-      if (liveOperationRunning) return;
-      if (
-        (currentFile || currentLiveCollectionId || currentSessionId) &&
-        !confirm(
-          "Start a new workspace? This clears the current source and plan from this window. Downloaded files are kept.",
-        )
-      )
-        return;
-      clearSource();
-      clearInputErrors();
-      renderApiCredentialFields(selectedSourceVendor);
-      [panHost, panApikey, panUser, panPass].forEach((input) => {
-        if (input) input.value = "";
-      });
-      if (terminalStreamBody) terminalStreamBody.replaceChildren();
-      logToTerminal(
-        "[SYSTEM] New workspace ready. Choose a source configuration to begin.",
-        "term-system",
-      );
-      sourceVendorSelect?.focus();
-    });
+    setBusy(true);
+    hideError();
 
-  const guideModal = document.getElementById("guide-modal");
-  let guideTrigger = null;
-  function closeGuide() {
-    guideModal?.classList.add("hidden");
-    if (guideModal) guideModal.setAttribute("aria-hidden", "true");
-    document.body.classList.remove("modal-open");
-    guideTrigger?.focus();
-  }
-  document
-    .getElementById("btn-open-guide")
-    ?.addEventListener("click", (event) => {
-      if (!guideModal) return;
-      guideTrigger = event.currentTarget;
-      guideModal.classList.remove("hidden");
-      guideModal.setAttribute("aria-hidden", "false");
-      document.body.classList.add("modal-open");
-      document.getElementById("btn-close-guide")?.focus();
-    });
-  document
-    .getElementById("btn-close-guide")
-    ?.addEventListener("click", closeGuide);
-  guideModal?.addEventListener("click", (event) => {
-    if (event.target === guideModal) closeGuide();
-  });
-  document.addEventListener("keydown", (event) => {
-    if (!guideModal || guideModal.classList.contains("hidden")) return;
-    if (event.key === "Escape") closeGuide();
-    if (event.key !== "Tab") return;
-    const focusable = [
-      ...guideModal.querySelectorAll('button, a[href], input, [tabindex="0"]'),
-    ].filter((element) => !element.disabled);
-    if (!focusable.length) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  });
+    const formData = new FormData();
+    formData.append("file", currentFile);
 
-  const themeToggle = document.getElementById("btn-toggle-theme");
-  const themePreference = window.matchMedia?.("(prefers-color-scheme: dark)");
-  let explicitTheme = null;
-  try {
-    const savedTheme = localStorage.getItem("fwmigrate-theme");
-    if (savedTheme === "light" || savedTheme === "dark")
-      explicitTheme = savedTheme;
-  } catch {
-    // Theme switching remains available when browser storage is restricted.
-  }
-
-  function applyTheme(theme) {
-    document.documentElement.dataset.theme = theme;
-    const isDark = theme === "dark";
-    document
-      .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", isDark ? "#141d19" : "#f5f6f3");
-    const label = isDark ? "Light mode" : "Dark mode";
-    setText("theme-label", label);
-    themeToggle?.setAttribute("aria-label", `Switch to ${label.toLowerCase()}`);
-    themeToggle?.setAttribute("aria-pressed", String(isDark));
-  }
-
-  themeToggle?.addEventListener("click", () => {
-    explicitTheme =
-      document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-    applyTheme(explicitTheme);
     try {
-      localStorage.setItem("fwmigrate-theme", explicitTheme);
-    } catch {
-      // Preserve the choice for this session even if it cannot be saved.
+      const response = await fetch("/api/extract/excel", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Failed to generate the Excel report.");
+      }
+
+      const blob = await response.blob();
+      const sourceName = currentFile.name.replace(/\.[^.]+$/, "");
+      const saved = await saveBlob(
+        blob,
+        `${sourceName}_fortigate_inventory.xlsx`,
+      );
+
+      if (saved) {
+        showToast("Excel report generated.");
+        setPreviewStatus(
+          "Excel report generated successfully.",
+          "ready",
+        );
+      }
+    } catch (error) {
+      showError(`Excel export failed: ${error.message}`);
+      setPreviewStatus(error.message, "error");
+    } finally {
+      setBusy(false);
     }
+  }
+
+  function showToast(message) {
+    if (!toastContainer) return;
+
+    const toast = document.createElement("div");
+    toast.className = "toast toast-success";
+    toast.textContent = message;
+    toastContainer.appendChild(toast);
+
+    setTimeout(() => toast.remove(), 3200);
+  }
+
+  function preventDefaults(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  if (dropzone && fileInput) {
+    ["dragenter", "dragover", "dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, preventDefaults);
+    });
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, () => {
+        dropzone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, () => {
+        dropzone.classList.remove("dragover");
+      });
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+      const files = event.dataTransfer?.files;
+      if (files?.length) handleFile(files[0]);
+    });
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    dropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files?.length) handleFile(fileInput.files[0]);
+    });
+  }
+
+  btnRemoveFile?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    clearSource();
   });
 
-  const followSystemTheme = (event) => {
-    if (!explicitTheme) applyTheme(event.matches ? "dark" : "light");
-  };
-  if (themePreference?.addEventListener)
-    themePreference.addEventListener("change", followSystemTheme);
-  else themePreference?.addListener?.(followSystemTheme);
-  applyTheme(explicitTheme || (themePreference?.matches ? "dark" : "light"));
+  btnNewWorkspace?.addEventListener("click", clearSource);
+  btnExtractExcel?.addEventListener("click", exportExcel);
+  tabReport?.addEventListener("click", () => setMode("report"));
+  tabExtract?.addEventListener("click", () => setMode("excel"));
+  document.querySelectorAll("[data-report-section]").forEach((button) => {
+    button.addEventListener("click", () => setReportSection(button.dataset.reportSection));
+  });
+  document.querySelectorAll("[data-object-section]").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeObjectSection = button.dataset.objectSection;
+      document.querySelectorAll("[data-object-section]").forEach((item) => {
+        item.classList.toggle("active", item === button);
+      });
+      renderTable();
+    });
+  });
+  reportSearch?.addEventListener("input", renderTable);
+  reportVdomFilter?.addEventListener("change", renderTable);
+  reportSeverityFilter?.addEventListener("change", renderTable);
 
-  updateTargetBundleDescriptions(selectedTargetVendor);
-  switchMode(activeMode);
-  syncWorkspace();
+  function syncThemeButton() {
+    const theme = document.documentElement.dataset.theme || "light";
+    const next = theme === "dark" ? "light" : "dark";
+    if (themeLabel) themeLabel.textContent = `${next === "dark" ? "Dark" : "Light"} mode`;
+    btnToggleTheme?.setAttribute("aria-pressed", String(theme === "dark"));
+  }
+
+  btnToggleTheme?.addEventListener("click", () => {
+    const current = document.documentElement.dataset.theme || "light";
+    const next = current === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+
+    try {
+      localStorage.setItem("fwmigrate-theme", next);
+    } catch (_) {
+      // Storage can be unavailable in privacy-restricted environments.
+    }
+
+    syncThemeButton();
+  });
+
+  syncThemeButton();
+  clearSource();
+  setMode("report");
 });

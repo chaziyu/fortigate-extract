@@ -73,10 +73,26 @@ def build_interface_topology(
         or build_reference_index(config)
     )
 
+    aggregate_owners: dict[tuple[str, str], list[str]] = {}
+    for aggregate in config.interfaces:
+        if not _is_aggregate(aggregate):
+            continue
+        for member_name in _deduplicate(aggregate.members):
+            owners = aggregate_owners.setdefault(
+                (aggregate.vdom, member_name),
+                [],
+            )
+            if aggregate.name not in owners:
+                owners.append(aggregate.name)
+
     interfaces = tuple(
         _resolve_interface(
             interface,
             references,
+            aggregate_owners=aggregate_owners.get(
+                (interface.vdom, interface.name),
+                (),
+            ),
         )
         for interface in config.interfaces
     )
@@ -165,12 +181,15 @@ def build_interface_topology(
 def _resolve_interface(
     interface: FGInterface,
     references: ReferenceIndex,
+    *,
+    aggregate_owners: tuple[str, ...] | list[str] = (),
 ) -> InterfaceTopologyEntry:
     path: list[str] = [
         interface.name
     ]
 
     issues: list[str] = []
+    aggregate_owners = tuple(aggregate_owners)
 
     aggregate: str | None = (
         interface.name
@@ -217,6 +236,25 @@ def _resolve_interface(
             aggregate = parent.name
 
         current = parent
+
+    if len(aggregate_owners) > 1:
+        issues.append(
+            "Interface belongs to multiple aggregates: "
+            f"{', '.join(repr(name) for name in aggregate_owners)}."
+        )
+
+    if aggregate is None and len(aggregate_owners) == 1:
+        aggregate = aggregate_owners[0]
+    elif (
+        aggregate is not None
+        and aggregate_owners
+        and aggregate not in aggregate_owners
+    ):
+        issues.append(
+            "Reverse aggregate membership conflicts with parent-derived "
+            f"aggregate {aggregate!r}: "
+            f"{', '.join(repr(name) for name in aggregate_owners)}."
+        )
 
     physical_interfaces, physical_issues = (
         _resolve_physical_interfaces(
@@ -273,6 +311,11 @@ def _resolve_physical_interfaces(
         physical: list[str] = []
         issues: list[str] = []
 
+        if not interface.members:
+            issues.append(
+                "Aggregate/redundant interface has no configured members."
+            )
+
         for member_name in interface.members:
             member = references.get(
                 ReferenceKind.INTERFACE,
@@ -308,7 +351,7 @@ def _resolve_physical_interfaces(
             issues,
         )
 
-    # VLAN / tunnel / logical child.
+    # VLAN / logical child.
     if interface.interface:
         parent = references.get(
             ReferenceKind.INTERFACE,
@@ -333,7 +376,7 @@ def _resolve_physical_interfaces(
         )
 
     # Terminal interface.
-    if _is_logical_without_parent(
+    if _requires_resolvable_parent(
         interface
     ):
         return (
@@ -342,6 +385,12 @@ def _resolve_physical_interfaces(
                 "Logical interface has no resolvable "
                 "physical parent."
             ],
+        )
+
+    if _is_logical_without_parent(interface):
+        return (
+            [],
+            [],
         )
 
     return (
@@ -401,6 +450,16 @@ def _interface_kind(
     return "physical"
 
 
+def _requires_resolvable_parent(
+    interface: FGInterface,
+) -> bool:
+    interface_type = (
+        interface.type or ""
+    ).lower()
+
+    return interface_type == "vlan"
+
+
 def _is_logical_without_parent(
     interface: FGInterface,
 ) -> bool:
@@ -413,9 +472,6 @@ def _is_logical_without_parent(
         "tunnel",
         "ipsec",
         "gre",
-        "vlan",
-        "aggregate",
-        "redundant",
         "vdom-link",
     }
 

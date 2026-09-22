@@ -105,6 +105,15 @@ class FortiGateTokenizer:
         return list(lexer)
 
     @staticmethod
+    def _is_incomplete_command(
+        error: ValueError,
+    ) -> bool:
+        return str(error) in {
+            "No closing quotation",
+            "No escaped character",
+        }
+
+    @staticmethod
     def _tokens_from_parts(
         parts: list[str],
         line_number: int,
@@ -144,10 +153,3 @@ class FortiGateTokenizer:
                 part,
                 line_number,
             )
-
-@staticmethod
-def _is_incomplete_command(error: ValueError) -> bool:
-    return str(error) in {
-        "No closing quotation",
-        "No escaped character",
-    }

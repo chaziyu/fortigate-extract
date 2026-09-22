@@ -15,8 +15,11 @@ class ReferenceKind(str, Enum):
     ZONE = "zone"
 
     ADDRESS = "address"
+    ADDRESS6 = "address6"
     ADDRESS_GROUP = "address_group"
+    ADDRESS_GROUP6 = "address_group6"
     WILDCARD_FQDN = "wildcard_fqdn"
+    EXTERNAL_ADDRESS = "external_address"
 
     SERVICE = "service"
     SERVICE_GROUP = "service_group"
@@ -189,23 +192,40 @@ def build_reference_index(
         config.zones,
     )
 
-    _add_named(
-        index,
-        ReferenceKind.ADDRESS,
-        config.addresses,
-    )
+    for address in config.addresses:
+        index.add(
+            ReferenceKind.ADDRESS6
+            if address.address_family == "ipv6"
+            else ReferenceKind.ADDRESS,
+            vdom=address.vdom,
+            name=address.name,
+            target=address,
+        )
 
-    _add_named(
-        index,
-        ReferenceKind.ADDRESS_GROUP,
-        config.address_groups,
-    )
+    for group in config.address_groups:
+        index.add(
+            ReferenceKind.ADDRESS_GROUP6
+            if group.address_family == "ipv6"
+            else ReferenceKind.ADDRESS_GROUP,
+            vdom=group.vdom,
+            name=group.name,
+            target=group,
+        )
 
     _add_named(
         index,
         ReferenceKind.WILDCARD_FQDN,
         config.wildcard_fqdns,
     )
+
+    for resource in config.external_resources:
+        if (resource.type or "").lower() == "address":
+            index.add(
+                ReferenceKind.EXTERNAL_ADDRESS,
+                vdom=resource.vdom,
+                name=resource.name,
+                target=resource,
+            )
 
     _add_named(
         index,
@@ -296,20 +316,27 @@ def collect_broken_references(
 
     issues: list[BrokenReference] = []
 
-    interface_like = (
+    policy_interface_like = (
         ReferenceKind.INTERFACE,
         ReferenceKind.ZONE,
         ReferenceKind.SDWAN_ZONE,
+        ReferenceKind.IPSEC_PHASE1,
     )
 
-    address_like = (
+    ipv4_address_like = (
         ReferenceKind.ADDRESS,
         ReferenceKind.ADDRESS_GROUP,
         ReferenceKind.WILDCARD_FQDN,
+        ReferenceKind.EXTERNAL_ADDRESS,
+    )
+
+    ipv6_address_like = (
+        ReferenceKind.ADDRESS6,
+        ReferenceKind.ADDRESS_GROUP6,
     )
 
     destination_address_like = (
-        *address_like,
+        *ipv4_address_like,
         ReferenceKind.VIP,
         ReferenceKind.VIP_GROUP,
     )
@@ -404,7 +431,10 @@ def collect_broken_references(
             source_name=group.name,
             source_field="members",
             names=group.members,
-            kinds=address_like,
+            kinds=(
+                ReferenceKind.ADDRESS6,
+                ReferenceKind.ADDRESS_GROUP6,
+            ) if group.address_family == "ipv6" else ipv4_address_like,
         )
 
         check(
@@ -413,7 +443,10 @@ def collect_broken_references(
             source_name=group.name,
             source_field="exclude_members",
             names=group.exclude_members,
-            kinds=address_like,
+            kinds=(
+                ReferenceKind.ADDRESS6,
+                ReferenceKind.ADDRESS_GROUP6,
+            ) if group.address_family == "ipv6" else ipv4_address_like,
         )
 
     for group in config.service_groups:
@@ -458,7 +491,7 @@ def collect_broken_references(
             source_name=source_name,
             source_field="srcintf",
             names=policy.srcintf,
-            kinds=interface_like,
+            kinds=policy_interface_like,
         )
 
         check(
@@ -467,7 +500,7 @@ def collect_broken_references(
             source_name=source_name,
             source_field="dstintf",
             names=policy.dstintf,
-            kinds=interface_like,
+            kinds=policy_interface_like,
         )
 
         check(
@@ -476,7 +509,7 @@ def collect_broken_references(
             source_name=source_name,
             source_field="srcaddr",
             names=policy.srcaddr,
-            kinds=address_like,
+            kinds=ipv4_address_like,
         )
 
         check(
@@ -486,6 +519,24 @@ def collect_broken_references(
             source_field="dstaddr",
             names=policy.dstaddr,
             kinds=destination_address_like,
+        )
+
+        check(
+            source_kind="policy",
+            vdom=policy.vdom,
+            source_name=source_name,
+            source_field="srcaddr6",
+            names=policy.srcaddr6,
+            kinds=ipv6_address_like,
+        )
+
+        check(
+            source_kind="policy",
+            vdom=policy.vdom,
+            source_name=source_name,
+            source_field="dstaddr6",
+            names=policy.dstaddr6,
+            kinds=ipv6_address_like,
         )
 
         check(
@@ -647,6 +698,10 @@ def _implicit_reference(
             name
         ):
             return ReferenceKind.SERVICE
+
+    if ReferenceKind.ADDRESS6 in kinds:
+        if name.lower() in {"all", "all6"}:
+            return ReferenceKind.ADDRESS6
 
     if (
         ReferenceKind.ADDRESS in kinds

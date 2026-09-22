@@ -1,362 +1,496 @@
 # FortiGate Extract
 
-A focused Python tool for extracting FortiGate configuration data into structured FortiGate-specific models and exporting the results for review.
+FortiGate CLI configuration extractor and Excel reporting tool.
 
-The project currently focuses on **accurate FortiGate extraction**, not multi-vendor migration.
+The project parses FortiGate configuration backups into a small FortiGate-specific source model, builds derived review views, validates relationships, and produces a structured Excel workbook.
 
-## Goal
+The current focus is **deep and reliable FortiGate extraction and analysis**. It is not a multi-vendor migration framework.
 
-```text
-FortiGate configuration
-→ parse
-→ FortiGate model
-→ validate
-→ export
-```
-
-Primary output:
+## Pipeline
 
 ```text
-Excel workbook
+FortiGate CLI
+    ↓
+Tokenizer
+    ↓
+Parser
+    ↓
+Command Evaluator
+    ↓
+FGConfig
+    ↓
+Relationships / Transforms
+    ↓
+DerivedViews
+    ↓
+Validation
+    ↓
+Excel Report
 ```
 
-## Scope
-
-Current scope includes FortiGate configuration extraction such as:
-
-- System information
-- Interfaces
-- Zones
-- Address objects
-- Address groups
-- Custom services
-- Service groups
-- Schedules
-- Firewall policies
-- VIPs
-- IP pools
-- Static routes
-- VPN configuration
-- Security profiles
-- Reference and validation issues
-
-Coverage will be added gradually.
-
-## Architecture
-
-The project follows these responsibilities:
+The responsibility rule for the repository is:
 
 ```text
 Tokenizer
-→ syntax only
+    syntax only
 
 Parser
-→ hierarchy and explicitly configured source data
+    hierarchy / structure only
 
-FortiGate model
-→ FortiGate-specific structured data
+Command Evaluator
+    explicit set / append / unset state + primitive typing
+
+FortiGate Models
+    small migration-relevant source fields + raw extras
+
+Relationships
+    cross-object references and topology
+
+Transforms
+    FortiGate semantics, normalization and derived views
 
 Validation
-→ references, consistency, unsupported values
+    detect and report problems only
 
-Exporter
-→ output formatting only
+Excel Exporter
+    presentation only
 ```
 
-The parser should preserve what exists in the source configuration.
+There is no vendor-neutral IR.
 
-It should not:
+The central source object is `FGConfig`. Calculated report information is carried separately in `DerivedViews`.
 
-- convert data into a vendor-neutral IR
-- infer target-vendor behavior
-- silently insert FortiOS defaults
-- silently discard unsupported settings
+> **FGConfig is explicit FortiGate source state. DerivedViews contains calculated report semantics. Excel presents both; it does not create semantics itself.**
 
-Unknown or currently unsupported settings should be preserved where practical.
+---
 
-## Example
+## Quick Start
 
-Input:
+### Requirements
+
+- Python 3.12 (the version exercised by CI)
+- Windows for the bundled `run_excel_report.bat` launcher
+- A UTF-8 FortiGate CLI backup by default
+
+### Windows
+
+Create a virtual environment and install dependencies:
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+
+Launch the local Excel report UI:
+
+```bat
+run_excel_report.bat
+```
+
+The local UI runs at:
 
 ```text
-config firewall address
-    edit "SERVER01"
-        set subnet 10.10.10.5 255.255.255.255
-        set comment "Production server"
+http://127.0.0.1:5000/
+```
+
+Workflow:
+
+```text
+Upload FortiGate configuration
+→ Preview extracted inventory
+→ Review validation counts
+→ Download Excel report
+```
+
+Recommended filename extensions:
+
+```text
+.conf
+.cfg
+.txt
+```
+
+The browser file picker filters for these extensions. The server accepts any
+non-empty filename containing a valid FortiGate CLI backup. Web uploads are
+decoded as UTF-8 and limited to 32 MiB.
+
+### CLI
+
+The same extraction pipeline can be used without the web interface.
+
+```bat
+set PYTHONPATH=src
+
+python -m fortigate_extract.main extract ^
+    --input firewall.conf ^
+    --output firewall_inventory.xlsx
+```
+
+Optional YAML extraction configuration:
+
+```bat
+python -m fortigate_extract.main extract ^
+    --input firewall.conf ^
+    --output firewall_inventory.xlsx ^
+    --config extraction.yaml
+```
+
+Currently, only input encoding is an active YAML setting:
+
+```yaml
+encoding: utf-8
+```
+
+Other fields in the internal configuration model are not yet supported as
+runtime controls and should not be relied on.
+
+---
+
+## Excel Report
+
+The workbook is intended for:
+
+- configuration review
+- migration preparation
+- firewall inventory
+- topology review
+- dependency checking
+- identifying unresolved references
+- identifying source-only or unsupported configuration
+
+The original FortiGate inventory workbook is used as the **content and field compatibility baseline**, but the new exporter does not preserve obsolete architecture simply for compatibility.
+
+The report follows this rule:
+
+```text
+Preserve useful original fields
++ add useful current source information
++ add current derived information
++ improve hierarchy and readability
+- old vendor-neutral IR fields
+- target-vendor artifacts
+- redundant duplicate columns
+- unsafe secret values
+```
+
+### Workbook organization
+
+The workbook is broadly organized into:
+
+```text
+Overview
+System
+Network
+Objects
+Policies / NAT
+Routing
+SD-WAN
+VPN
+DHCP
+SSL VPN
+Identity / Authentication
+Security
+Source Appendix
+Validation / Coverage
+```
+
+Every workbook follows a fixed schema. Important areas include:
+
+- `Summary` and `Review Required`
+- system, DNS, NTP settings, and nested NTP server objects
+- interfaces, secondary IPs, zones, and topology
+- addresses, services, policies, and NAT
+- routes, VPN, DHCP, SD-WAN, and SSL VPN
+- users, administrators, and security profiles
+- unresolved references, unsupported coverage, and source inventory
+
+The exact worksheet order is defined by
+[`SHEET_ORDER`](src/fortigate_extract/export/excel_schema.py). Warnings are
+reported through `Review Required` rather than a separate `Warnings` sheet.
+
+Explicit configuration without a dedicated typed model is preserved as rows
+in `FortiGate Source Inventory`, `Unsupported`, and `Extraction Coverage`.
+Selected source-only sections may also have dedicated presentation worksheets
+when that improves traceability; source evidence does not create worksheets
+automatically by default.
+
+`Extraction Evidence` is intentionally not part of the standard workbook. Traceability is kept in the relevant object sheets, source appendix, validation sheets, and coverage sheets.
+
+---
+
+## Source Data vs Derived Data
+
+### Source models
+
+Source models represent explicitly configured FortiGate state.
+
+For example:
+
+```text
+config firewall policy
+    edit 10
+        set srcintf "LAN"
+        set dstintf "WAN"
+        set action accept
     next
 end
 ```
 
-Structured result:
+The source model stores what was explicitly configured.
+
+A missing field means:
 
 ```text
-FortiGateAddress
-- name: SERVER01
-- subnet: 10.10.10.5/32
-- comment: Production server
+not explicitly configured
 ```
 
-The data can then be exported into an Excel worksheet for review.
+It does **not** automatically mean a FortiOS default.
 
-## Excel output
+Typed models intentionally stay small. Explicit source settings that do not need a dedicated model field are preserved through `raw_extra` or generic source inventory where practical.
 
-The workbook may contain worksheets such as:
+### Derived views
+
+Derived information is built after source extraction.
+
+Current derived areas include:
+
+- interface topology
+- VPN-to-interface topology
+- normalized services
+- normalized service groups
+- source NAT views
+- normalized policy names
+- normalized VPN Phase 2 selectors
+- reference resolution
+
+Derived logic belongs in:
 
 ```text
-Summary
-Interfaces
-Zones
-Addresses
-Address Groups
-Services
-Service Groups
-Schedules
-Policies
-VIPs
-IP Pools
-Static Routes
-VPN
-Security Profiles
-Validation Issues
+relationships/
+transform/
+derived.py
 ```
 
-The Excel output is intended for:
+It does not belong in the tokenizer, parser, or source models.
 
-- configuration review
-- migration preparation
-- object inventory
-- dependency checking
-- identifying unsupported or unresolved configuration
+---
+
+## Interface Topology
+
+The Interfaces worksheet is topology-aware.
+
+Example:
+
+```text
+◆ agg1
+├─ ● port1       Member of agg1
+├─ ● port2       Member of agg1
+│
+├─ ▣ vlan100     Child of agg1
+│  └─ ◈ VPN-HQ   Child of vlan100
+│
+└─ ▣ vlan200     Child of agg1
+```
+
+Symbols:
+
+```text
+◆  aggregate / redundant interface
+●  physical interface
+▣  VLAN / logical child
+◈  VPN / tunnel
+◇  other logical interface
+```
+
+The hierarchy is derived from `relationships/interface_topology.py`; it is presentation metadata and does not modify source interface objects.
+
+---
+
+## Policy Reporting
+
+The Policies worksheet should primarily expose useful FortiGate policy data plus current validation/analysis information.
+
+The intended direction is:
+
+```text
+Policy identity
+Match criteria
+Action / NAT
+Logging
+Security profiles
+Description / source metadata
+Review status
+```
+
+Old workbook fields are not retained blindly.
+
+In particular:
+
+- redundant `Original` / `Normalized` duplicates should only remain when a current transform produces a genuinely different value;
+- `Effective ...` fields should only exist when FortiGate effective semantics are actually calculated;
+- old cross-vendor or target-vendor profile fields should not be part of the normal FortiGate policy report;
+- uncommon explicit policy settings may remain in `Additional Settings` rather than becoming permanent first-class columns.
+
+This keeps the policy report readable without losing explicit source configuration.
+
+---
+
+## Explicit Fields and Additional Settings
+
+Two report concepts are important for traceability:
+
+```text
+Source Explicit Fields
+Additional Settings
+```
+
+`Source Explicit Fields` records fields explicitly present in the FortiGate source.
+
+`Additional Settings` contains safe preserved source values that are not represented by dedicated report columns.
+
+Conceptually:
+
+```text
+raw_extra
+    ↓
+secret sanitization
+    ↓
+Additional Settings
+```
+
+This allows the typed source models to remain small without silently discarding useful source configuration.
+
+---
+
+## Source Inventory
+
+Not every FortiGate section needs a first-class typed model.
+
+Explicit configuration from advanced or currently unsupported sections can be preserved generically as source evidence.
+
+Examples may include:
+
+- routing protocol settings
+- authentication-server configuration
+- Internet Service definitions
+- advanced SSL VPN child configuration
+- DoS configuration
+- other explicit FortiGate sections
+
+These records can be surfaced through:
+
+```text
+FortiGate Source Inventory
+Unsupported
+Extraction Coverage
+```
+
+Generic source capture preserves explicit source state only. It does not insert FortiOS defaults or perform semantic conversion.
+
+---
 
 ## Validation
 
-Validation should detect issues without silently modifying the source data.
+Validation detects problems without silently changing source data.
 
-Examples:
+Current validation covers areas such as:
+
+- duplicate object definitions and ambiguous source identity
+- broken object references
+- missing interfaces
+- missing addresses or address groups
+- missing services or service groups
+- topology issues
+- service normalization issues
+- NAT transformation issues
+- policy issues
+- VPN issues
+
+Validation results feed report areas such as:
 
 ```text
-Address group references missing address
-Service group references missing service
-Policy references unknown object
-Policy references missing interface or zone
-Duplicate object
-Unsupported setting
-Malformed configuration
+Review Required
+Unresolved References
+Warnings
 ```
 
-Validation results should include enough source context to identify the affected object.
+Preferred behavior:
+
+```text
+detect
+→ explain
+→ preserve source
+```
+
+not:
+
+```text
+detect
+→ silently repair
+```
+
+---
 
 ## Security
 
-FortiGate configuration files may contain sensitive values.
+FortiGate backups may contain credentials and other sensitive values.
 
-Sensitive data should not be exported or logged.
+Actual secret values must never be exported to Excel or written to logs.
 
-Examples:
+Examples include:
 
 - passwords
 - pre-shared keys
-- API keys
 - private keys
-- SNMP communities
+- API keys
 - authentication secrets
 - tokens
+- key strings
 
-Sensitive values should be redacted or omitted.
-
-## Non-goals
-
-The following are intentionally outside the current scope:
-
-- Vendor-neutral IR
-- Multi-vendor migration
-- Terraform
-- Live API ingestion
-- SSH collection
-- Automatic deployment
-- Background job processing
-- Web authentication
-- RBAC
-- Generic plugin systems
-- Target firewall generation
-
-These may be considered later if there is a clear requirement.
-
-## Project structure
-
-Example structure:
+Where useful, safe metadata may be exposed instead:
 
 ```text
-fortigate-extract/
-├── AGENTS.md
-├── README.md
-├── requirements.txt
-├── pyproject.toml
-├── .gitignore
-├── .gitattributes
-│
-├── documentation/
-│
-├── src/
-│   └── fortigate_extract/
-│       ├── __init__.py
-│       ├── main.py
-│       ├── config.py
-│       ├── web.py
-│       │
-│       ├── tokenizer.py
-│       ├── nodes.py
-│       ├── parser.py
-│       ├── section_registry.py
-│       ├── command_evaluator.py
-│       │
-│       ├── model/
-│       │   ├── __init__.py
-│       │   ├── config.py
-│       │   ├── interface.py
-│       │   ├── zone.py
-│       │   ├── address.py
-│       │   ├── service.py
-│       │   ├── policy.py
-│       │   ├── ippol.py
-│       │   ├── vip.py
-│       │   ├── route_static.py
-│       │   ├── vpn.py
-│       │   ├── vpn_ssl.py
-│       │   ├── dhcp.py
-│       │   ├── sdwan.py
-│       │   ├── user.py
-│       │   ├── admin.py
-│       │   ├── ips.py
-│       │   └── security_profile.py
-│       │
-│       ├── extraction/
-│       │   ├── __init__.py
-│       │   ├── extractor.py
-│       │   ├── result.py
-│       │   ├── interfaces.py
-│       │   ├── addresses.py
-│       │   ├── services.py
-│       │   ├── schedules.py
-│       │   ├── policies.py
-│       │   ├── nat.py
-│       │   ├── routing.py
-│       │   ├── vpn.py
-│       │   └── security_profiles.py
-│       │
-│       ├── validation/
-│       │   ├── __init__.py
-│       │   ├── models.py
-│       │   ├── references.py
-│       │   ├── validators.py
-│       │   └── coverage.py
-│       │
-│       ├── fortios/
-│       │   ├── __init__.py
-│       │   ├── predefined_services.py
-│       │   ├── firewall_vip_746.py
-│       │   └── firewall_ip_746.py
-│       │
-│       ├── security/
-│       │   ├── __init__.py
-│       │   ├── redaction.py
-│       │   └── secrets.py
-│       │
-│       ├── utils/
-│       │   ├── __init__.py
-│       │   ├── network.py
-│       │   ├── mac.py
-│       │   └── certificate.py
-│       │
-│       ├── export/
-│       │   ├── __init__.py
-│       │   └── excel.py
-│       │
-│       ├── templates/
-│       └── static/
-│
-├── tests/
-│   ├── fixtures/
-│   ├── test_tokenizer.py
-│   ├── test_parser.py
-│   ├── test_extraction.py
-│   ├── test_validation.py
-│   └── test_export.py
-│
-└── examples/
+Password Configured = Yes
+PSK Configured = Yes
+Credential Configured = Yes
 ```
 
-## Development principles
+Raw extras and generic source records pass through the same secret-sanitization rules before Excel export.
 
-The project prioritizes:
+The bundled web launcher binds to `127.0.0.1`. Do not expose the development
+server directly to untrusted networks.
+
+---
+
+## Project Structure
 
 ```text
-Correctness
-→ traceability
-→ clear warnings
-→ maintainability
-→ broader coverage
+src/fortigate_extract/
+├── tokenizer.py / parser.py / command_evaluator.py
+├── model/             FortiGate source models
+├── extraction/        Domain extraction, source inventory, and metadata
+├── relationships/     Reference resolution and interface topology
+├── transform/         FortiGate normalization and derived semantics
+├── validation/        Non-mutating validation
+├── export/            Excel schema and workbook generation
+├── fortios/           FortiOS-specific reference data
+├── security/          Secret detection and sanitization
+├── web.py             Web and desktop application entry points
+├── web_report.py      Browser report serialization
+├── templates/         Web UI templates
+└── static/            Web UI assets
 ```
 
-When FortiGate behavior is unclear:
+---
 
-1. Preserve the original source data.
-2. Mark it as unknown or unsupported.
-3. Do not guess.
+## Architecture Rules
 
-## Testing
+### Tokenizer
 
-Supported features should include fixtures and tests covering:
+Syntax only.
 
-```text
-input config
-→ parsed structure
-→ FortiGate model
-→ validation
-→ exported values
-```
-
-Important cases include:
-
-- quoted object names
-- nested `config` blocks
-- empty sections
-- duplicate entries
-- unknown settings
-- malformed configuration
-- unresolved references
-- VDOM-aware configuration
-- sensitive-value redaction
-
-## High Level View
-
-At a high level, the program should now work like this:
-
-```text
-FortiGate config file
-        ↓
-tokenizer.py
-        ↓
-parser.py
-        ↓
-nodes.py structural tree
-        ↓
-section_registry.py + command_evaluator.py
-        ↓
-extraction/<domain>.py
-        ↓
-model/<domain>.py
-        ↓
-relationship / derived extraction
-        ↓
-validation/
-        ↓
-Excel export
-```
-
-### 1. Tokenizer
-
-`tokenizer.py` reads raw FortiGate CLI text and converts it into simple syntax tokens:
+It recognizes FortiGate CLI constructs such as:
 
 ```text
 config
@@ -366,58 +500,18 @@ unset
 append
 next
 end
-string
-comment
+comments
+strings
+unknown commands
 ```
 
-It should not know what an IP address, service, interface, or policy means.
+It must not understand FortiGate object semantics.
 
-Example:
+### Parser
 
-```text
-set subnet 10.0.0.0 255.255.255.0
-```
+Structure only.
 
-becomes roughly:
-
-```text
-SET
-STRING subnet
-STRING 10.0.0.0
-STRING 255.255.255.0
-```
-
-### 2. Parser
-
-`parser.py` consumes those tokens and builds the source structure only.
-
-Example:
-
-```text
-config firewall address
-    edit "LAN"
-        set subnet 10.0.0.0 255.255.255.0
-    next
-end
-```
-
-becomes:
-
-```text
-ConfigNode("firewall address")
-└── EditNode("LAN")
-    └── CommandNode(
-            operation="set",
-            key="subnet",
-            values=[...]
-        )
-```
-
-The parser still does not construct `FGAddress`.
-
-### 3. Structural nodes
-
-`nodes.py` stores the syntax tree:
+It builds:
 
 ```text
 FortiGateConfigTree
@@ -428,27 +522,11 @@ UnknownCommandNode
 CommentNode
 ```
 
-This is the authoritative representation of what was structurally present in the source configuration.
+It must not apply FortiOS defaults or create report objects.
 
-### 4. Section registry
+### Command Evaluator
 
-`section_registry.py` tells the evaluator how basic fields behave.
-
-For example:
-
-```python
-"firewall policy":
-    srcintf -> list
-    dstintf -> list
-    session_ttl -> integer
-    action -> scalar
-```
-
-It does not construct models or apply FortiOS defaults.
-
-### 5. Command evaluator
-
-`command_evaluator.py` evaluates commands inside one object in source order:
+Evaluates explicit command state in source order:
 
 ```text
 set
@@ -456,232 +534,153 @@ append
 unset
 ```
 
-For example:
+It also performs primitive field typing according to `section_registry.py`.
+
+### FortiGate Models
+
+Represent small FortiGate-specific source concepts.
+
+They contain migration/review-relevant typed fields, `explicit_fields`, and preserved `raw_extra`.
+
+They are not a vendor-neutral IR.
+
+### Relationships
+
+Resolve cross-object meaning such as:
 
 ```text
-set member A B
-append member C
-unset comment
+VLAN → parent interface
+aggregate → member interfaces
+VPN → attached interface
+policy → referenced objects
 ```
 
-produces explicit source state roughly like:
+Relationships do not mutate source models.
 
-```python
-attributes = {
-    "member": ["A", "B", "C"],
-}
+### Transforms
 
-explicit_fields = {
-    "member",
-}
-
-unset_fields = {
-    "comment",
-}
-```
-
-Unknown fields go into:
-
-```python
-raw_extra
-```
-
-Secret values are discarded, with only presence tracked.
-
-### 6. Domain extraction
-
-Now the files in `extraction/` interpret FortiGate sections.
-
-For example:
-
-```text
-extraction/addresses.py
-    firewall address
-    firewall addrgrp
-        ↓
-    FGAddress
-    FGAddressGroup
-```
-
-```text
-extraction/vpn.py
-    phase1-interface
-    phase2-interface
-        ↓
-    FGIPsecPhase1
-    FGIPsecPhase2
-```
-
-```text
-extraction/routing.py
-    router static
-        ↓
-    FGStaticRoute
-```
-
-This is where source syntax gets mapped into the small FortiGate-specific models.
-
-### 7. Source models
-
-The `model/` folder represents explicit FortiGate source concepts:
-
-```text
-FGInterface
-FGAddress
-FGService
-FGPolicy
-FGIPPool
-FGVIP
-FGStaticRoute
-FGIPsecPhase1
-FGIPsecPhase2
-...
-```
-
-Important rule:
-
-```text
-None
-= not explicitly configured
-```
-
-Do not insert FortiOS defaults into these models.
-
-### 8. FortiOS semantic helpers
-
-Files under:
-
-```text
-fortios/
-```
-
-contain vendor knowledge such as:
-
-```text
-firewall_ip_746.py
-firewall_vip_746.py
-predefined_services.py
-```
-
-They handle things like:
-
-```text
-documented FortiOS defaults
-valid ranges
-predefined objects
-version-specific semantics
-```
-
-For example:
-
-```python
-effective_vip_settings_746(vip)
-```
-
-may derive an effective default without modifying `FGVIP`.
-
-### 9. Relationship and derived extraction
-
-After all source objects exist, resolve cross-object relationships.
+Contain FortiGate semantics, normalization, defaults where explicitly supported, and report-oriented conversions.
 
 Examples:
 
 ```text
-VLAN → parent interface
-Phase2 → Phase1
-Phase1 → interface
-policy → addresses
-policy → services
-policy → schedule
-policy → IP pool
-policy destination → VIP
-SD-WAN member → interface
+service normalization
+source NAT derivation
+policy name normalization
+VPN selector normalization
 ```
 
-Derived report data also happens here.
+### Validation
 
-For example:
+Detects and reports problems.
+
+It does not silently rewrite the configuration.
+
+### Excel Exporter
+
+Consumes:
 
 ```text
-FGPolicy
-FGIPPool
-FGVIP
-FGVIPGroup
-    ↓
-extraction/nat.py
-    ↓
-ExtractedNATRule
+ExtractionResult / FGConfig
++
+DerivedViews
++
+ValidationResult
 ```
 
-`ExtractedNATRule` is a report view, not a FortiGate source object.
+and produces the workbook.
 
-### 10. Validation
+The exporter is responsible for:
 
-`validation/` checks things such as:
+- worksheet selection
+- column ordering
+- formatting
+- filters
+- freeze panes
+- hierarchy presentation
+- workbook navigation
+- review highlighting
+- safe source presentation
+
+It should not become a second FortiGate semantic engine.
+
+---
+
+## Testing
+
+Run the current regression tests with:
+
+```bat
+set PYTHONPATH=src
+python -m unittest discover -s tests -v
+```
+
+For pull requests, GitHub Actions uses Python 3.12, compiles `src` and `tests`,
+and then runs the same test command.
+
+Current regression coverage includes:
+
+- parsing, source extraction, and source preservation
+- relationships, topology, derived views, and validation
+- Excel workbook structure and presentation
+- secret-value leakage prevention
+- web report rendering, preview, and Excel download
+
+---
+
+## Development Principles
+
+Priority:
 
 ```text
-unresolved references
-invalid addresses
-invalid ranges
-malformed IDs
-unsupported explicit settings
-missing required relationships
+correctness
+→ explicit source preservation
+→ clear semantics
+→ traceability
+→ maintainability
+→ broader coverage
 ```
 
-It should detect problems, not silently repair them.
+When FortiGate behavior is uncertain:
 
-### 11. Excel exporter
+1. preserve the explicit source value;
+2. do not invent a default;
+3. do not guess target-vendor behavior;
+4. keep unsupported source data visible through `Additional Settings` or source inventory where practical;
+5. add semantics only when supported by FortiGate documentation or verified behavior.
 
-Finally:
+---
 
-```text
-FGConfig
-+ derived report views
-+ validation results
-        ↓
-Excel workbook
-```
+## Non-Goals
 
-The exporter should mainly format data into sheets.
+The current project does not aim to provide:
 
-It should not contain FortiGate parsing or semantic logic.
+- a vendor-neutral IR
+- Cisco / Check Point / Juniper / PAN source parsers
+- target-vendor configuration generators
+- Terraform generation
+- automatic firewall deployment
+- SQLite report persistence
+- `.fgreport` databases
+- browser-side SQLite
+- generic migration orchestration
 
-So the overall responsibility is:
+These concerns should not be introduced into the tokenizer, parser, source models, or Excel exporter.
 
-```text
-Tokenizer
-    syntax
+---
 
-Parser
-    structure
+## Support and Licensing
 
-Command evaluator
-    explicit command state
+Report defects through this repository's GitHub issue tracker. Use a minimal,
+sanitized configuration sample and never attach production secrets.
 
-Extraction
-    FortiGate source semantics
+This repository currently has no declared license. Add the intended `LICENSE`
+file before presenting it as reusable or open-source software.
 
-Models
-    FortiGate objects
+---
 
-FortiOS helpers
-    defaults / vendor rules
+## Technical Reference
 
-Relationships
-    cross-object meaning
+FortiGate semantics should be based on official Fortinet FortiOS CLI documentation and verified source behavior.
 
-Validation
-    detect problems
-
-Exporter
-    presentation
-```
-
-That separation is the main design goal of the refactor.
-
-## Reference
-
-The primary technical reference is the official Fortinet FortiOS CLI documentation.
-
-Current work should focus on **deep and reliable FortiGate extraction before adding migration or other vendors**.
-```
+Version-specific behavior belongs in dedicated FortiOS semantic helpers rather than in the tokenizer, parser, or Excel exporter.

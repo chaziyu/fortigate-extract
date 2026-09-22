@@ -1,238 +1,228 @@
 # AGENTS.md
 
-## Project purpose
+## Purpose
 
-`fortigate-extract` extracts FortiGate configuration data into a structured FortiGate-specific model and exports it for review, primarily to Excel.
+`fortigate-extract` is a FortiGate CLI extraction and Excel reporting tool.
 
-Current scope:
-
-```text
-FortiGate config file
-→ parse
-→ FortiGate model
-→ validate
-→ export
-```
-
-Do not introduce multi-vendor migration logic unless explicitly requested.
-
-## Architecture rules
-
-Follow these responsibilities strictly:
+Current pipeline:
 
 ```text
-Tokenizer   → syntax only
-Parser      → structure + explicitly configured source data only
-Model       → FortiGate-specific fields + raw extras
-Validation  → references, consistency, unsupported values
-Exporter    → presentation only
+FortiGate CLI
+→ Tokenizer
+→ Parser
+→ Command Evaluator
+→ FGConfig
+→ Relationships / Transforms
+→ DerivedViews
+→ Validation
+→ Excel
 ```
 
-Do not place vendor semantics or inferred defaults in the tokenizer or structural parser.
+There is no vendor-neutral IR.
 
-## Parser rules
+## Core Rules
 
-The parser must:
+```text
+Tokenizer
+    syntax only
 
-- preserve FortiGate hierarchy
-- preserve explicit `config`, `edit`, `set`, `unset`, `append`, `select`, `next`, `end`
-- preserve original values where practical
-- preserve unknown settings instead of silently dropping them
-- avoid guessing FortiOS defaults
-- avoid converting data into vendor-neutral concepts
-- fail visibly on malformed input
+Parser
+    structure only
 
-The parser should represent what the configuration says, not what it might mean on another firewall.
+Command Evaluator
+    set / append / unset state
+    primitive typing only
 
-## FortiGate model rules
+FGConfig / source models
+    explicit FortiGate source data
+    small migration-relevant fields
+    raw_extra for preserved extras
 
-Models should remain close to FortiOS concepts.
+Relationships
+    references / topology
+    do not mutate source models
 
-Examples:
+Transforms
+    FortiGate semantics
+    normalization
+    supported defaults / conversions
+    derived report views
 
-- interface
-- zone
-- address
-- address group
-- custom service
-- service group
-- schedule
-- firewall policy
-- VIP
-- IP pool
-- static route
-- VPN
-- security profile
+Validation
+    detect and report only
 
-Use typed fields only for data relevant to extraction and review.
+Excel
+    presentation only
+```
 
-Preserve unsupported or currently unused settings in `raw_extra` or equivalent storage.
+## Source Data
 
-Do not create a generic IR layer.
+`FGConfig` represents explicit source state.
 
-## Semantics and defaults
+A missing value means:
 
-Do not inject undocumented defaults during parsing.
+```text
+not explicitly configured
+```
 
-If FortiOS defaults or derived behavior are needed, handle them in a separate interpretation or validation step.
+Do not silently treat it as a FortiOS default.
 
 Keep these distinct:
 
 ```text
-explicit source value
+explicit source
 derived value
-FortiOS default
+effective/default value
 unknown value
 ```
 
-Never make them indistinguishable.
+Do not add source-model fields only to satisfy Excel.
 
-## Validation rules
-
-Validation should detect, not silently fix.
-
-Examples:
-
-- missing address-group members
-- missing service-group members
-- invalid policy references
-- missing interfaces or zones
-- duplicate objects
-- unsupported values
-- malformed objects
-- unresolved references
-
-Return warnings or errors with enough context to identify the source object.
-
-Do not mutate configuration data during validation unless explicitly required.
-
-## Export rules
-
-Exporters must not contain parsing or FortiGate semantic logic.
-
-They should only convert validated model data into output formats.
-
-Primary output:
+Preserve useful unsupported settings through:
 
 ```text
-Excel workbook
+raw_extra
+Source Inventory
+source appendix sheets
 ```
 
-Recommended worksheets:
+## Semantics
 
-- Summary
-- Interfaces
-- Zones
-- Addresses
-- Address Groups
-- Services
-- Service Groups
-- Schedules
-- Policies
-- VIPs
-- IP Pools
-- Static Routes
-- VPN
-- Security Profiles
-- Validation Issues
+Do not put FortiGate semantics or defaults in:
 
-## Security rules
+```text
+tokenizer
+parser
+command evaluator
+Excel exporter
+```
 
-FortiGate configuration may contain sensitive data.
+Cross-object meaning belongs in `relationships/`.
 
-Never expose secrets in exported reports.
+FortiGate defaults, normalization and conversions belong in `transform/` or dedicated FortiOS helpers.
 
-Redact or omit:
+## Excel
 
-- passwords
-- pre-shared keys
-- API keys
-- private keys
-- SNMP communities
-- authentication secrets
-- tokens
+The original workbook is the content compatibility baseline, not an architecture to restore.
 
-Do not log sensitive values.
+Use:
 
-## Scope control
+```text
+keep useful original fields
++ add current source fields
++ add genuine derived fields
+- old IR fields
+- target-vendor fields
+- redundant duplicates
+- unsupported fake/effective fields
+```
 
-Do not add these unless explicitly requested:
+`Additional Settings` is for useful explicit source fields that do not justify permanent columns.
 
-- vendor-neutral IR
-- other firewall vendors
-- Terraform
-- live API ingestion
-- SSH collection
-- deployment
-- background jobs
-- web authentication
-- RBAC
-- plugin systems
-- generic multi-vendor registries
+Only expose `Effective ...` fields when the current transform actually calculates them.
 
-Prefer the smallest implementation that satisfies FortiGate extraction.
+Do not duplicate `Original / Normalized` columns unless the values genuinely differ.
 
-## Coding style
+Interface hierarchy must come from the topology relationship model, not parser changes.
+
+## Validation
+
+Validation must not silently repair or mutate configuration.
+
+Report problems with enough context to identify the affected object.
+
+## Security
+
+Never export or log actual secrets:
+
+```text
+passwords
+PSKs
+private keys
+API keys
+tokens
+authentication secrets
+key strings
+```
+
+Safe metadata such as `Password Configured = Yes` is allowed.
+
+All raw/source-extra output must pass through the existing sanitization layer.
+
+## Scope
+
+Do not reintroduce unless explicitly requested:
+
+```text
+vendor-neutral IR
+multi-vendor architecture
+target-vendor generators
+Terraform
+SQLite / .fgreport
+generic migration framework
+```
+
+## Change Discipline
 
 Before editing:
 
-- inspect existing logic
-- reuse existing FortiGate code where appropriate
-- make the smallest required change
-- avoid unrelated refactoring
+1. inspect the actual current branch;
+2. inspect existing paths, models and symbols;
+3. do not guess names or APIs;
+4. make the smallest coherent change;
+5. avoid unrelated refactoring.
 
-Prefer:
+Prefer package-relative imports.
 
-- small modules
-- explicit names
-- typed models
-- deterministic behavior
-- clear error reporting
-
-Avoid:
-
-- hidden fallbacks
-- implicit data loss
-- large generic abstractions
-- premature framework design
+Do not restore old code just because the old Excel workbook contained fields produced by it.
 
 ## Testing
 
-Every supported FortiGate feature should have fixtures and tests.
-
-Test at least:
+Test the affected path:
 
 ```text
-input config
-→ parsed structure
-→ FortiGate model
+source
+→ parser
+→ FGConfig
+→ DerivedViews
 → validation
-→ exported values
+→ Excel
 ```
 
-Include tests for:
+Important regressions:
 
-- quoted names
-- spaces in values
-- nested `config`
-- empty sections
-- duplicate entries
-- unknown settings
-- malformed blocks
-- unresolved references
-- VDOM-aware configuration where supported
-- secret redaction
+```text
+VDOM handling
+nested config
+unknown fields
+reference resolution
+interface topology
+Excel compatibility
+secret redaction
+web preview
+Excel download
+```
 
-Do not claim tests passed unless they were actually run.
+Do not claim tests pass unless they were actually run.
 
-## Source of truth
+## Reference
 
-Use official Fortinet FortiOS CLI documentation as the primary reference.
+Use official Fortinet FortiOS CLI documentation as the primary semantic reference.
 
 When behavior is unclear:
 
-1. preserve the raw source
-2. mark the behavior as unknown or unsupported
-3. do not guess
+```text
+preserve source
+→ mark unknown/source-only
+→ do not guess
+```
 
-Current implementation should prioritize **correct extraction over broad feature coverage**.
+Priority:
+
+```text
+correctness
+→ source preservation
+→ clear semantics
+→ traceability
+→ maintainability
+```

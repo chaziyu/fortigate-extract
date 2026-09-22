@@ -76,23 +76,31 @@ def sanitize_source_attributes(
     source settings remain consistent with parser attribute naming.
     """
 
-    sanitized: Dict[str, Any] = {}
+    return {
+        _normalize_source_key(key): sanitize_source_value(key, value)
+        for key, value in attributes.items()
+    }
 
-    for key, value in attributes.items():
-        normalized_key = (
-            str(key)
-            .lower()
-            .replace("-", "_")
-        )
 
-        if normalized_key in NON_SECRET_CREDENTIAL_METADATA:
-            sanitized[normalized_key] = value
-        elif (
-            normalized_key in _SENSITIVE_EXACT_KEYS
-            or normalized_key.endswith(_SENSITIVE_KEY_SUFFIXES)
-        ):
-            sanitized[normalized_key] = "[REDACTED]"
-        else:
-            sanitized[normalized_key] = value
+def sanitize_source_value(
+    key: str,
+    value: Any,
+) -> Any:
+    """Redact one source value using the shared source-key policy."""
 
-    return sanitized
+    normalized_key = _normalize_source_key(key)
+
+    if normalized_key in NON_SECRET_CREDENTIAL_METADATA:
+        return value
+
+    if (
+        normalized_key in _SENSITIVE_EXACT_KEYS
+        or normalized_key.endswith(_SENSITIVE_KEY_SUFFIXES)
+    ):
+        return "[REDACTED]"
+
+    return value
+
+
+def _normalize_source_key(key: str) -> str:
+    return str(key).lower().replace("-", "_")
