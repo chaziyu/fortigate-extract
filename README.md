@@ -2,6 +2,8 @@
 
 FortiGate CLI configuration extractor and Excel reporting tool.
 
+Try the [hosted web app](https://fortigate-extract.onrender.com/); because it uses Render's free hosting, it may spin down when idle and take a little time to launch.
+
 The project parses FortiGate configuration backups into a small FortiGate-specific source model, builds derived review views, validates relationships, and produces a structured Excel workbook.
 
 The current focus is **deep and reliable FortiGate extraction and analysis**. It is not a multi-vendor migration framework.
