@@ -31,6 +31,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const reportSeverityFilter = document.getElementById("report-severity-filter");
   const reportTableHead = document.getElementById("report-table-head");
   const reportTableBody = document.getElementById("report-table-body");
+  const reportTable = document.querySelector(".report-table");
+  const reportTableWrap = document.querySelector(".report-table-wrap");
+  const reportTableCaption = document.getElementById("report-table-caption");
+  const reportRowCount = document.getElementById("report-row-count");
+  const reportScrollHint = document.getElementById("report-scroll-hint");
   const reportEmpty = document.getElementById("report-empty");
   const previewStatus = document.getElementById("preview-status");
   const inventorySummary = document.getElementById("inventory-summary");
@@ -104,51 +109,52 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const reportColumns = {
     interfaces: [
-      ["display_name", "Topology"], ["kind", "Kind"], ["ip", "IP / Remote Gateway"],
-      ["role", "Role"], ["parent", "Parent"], ["aggregate", "Aggregate"],
-      ["status", "Status"], ["review", "Review"],
+      ["display_name", "Topology", "topology"], ["kind", "Kind", "compact"],
+      ["ip", "IP / Remote Gateway", "address"], ["role", "Role", "compact"],
+      ["parent", "Parent"], ["aggregate", "Aggregate"],
+      ["status", "Status", "compact"], ["review", "Review", "notes"],
     ],
     addresses: [
-      ["name", "Name"], ["value", "Value"], ["type", "Type"],
-      ["address_family", "Family"], ["associated_interface", "Interface"],
-      ["review", "Review"],
+      ["name", "Name"], ["value", "Value", "address"], ["type", "Type", "compact"],
+      ["address_family", "Family", "compact"], ["associated_interface", "Interface"],
+      ["review", "Review", "notes"],
     ],
     address_groups: [
-      ["name", "Name"], ["members", "Members"], ["address_family", "Family"],
-      ["exclude_members", "Excluded"], ["review", "Review"],
+      ["name", "Name"], ["members", "Members"], ["address_family", "Family", "compact"],
+      ["exclude_members", "Excluded"], ["review", "Review", "notes"],
     ],
     services: [
-      ["name", "Name"], ["protocol", "Protocol"], ["port", "Port"],
-      ["source_port", "Source Port"], ["generated", "Generated"],
-      ["review", "Review"],
+      ["name", "Name"], ["protocol", "Protocol", "compact"], ["port", "Port", "compact"],
+      ["source_port", "Source Port", "compact"], ["generated", "Generated", "compact"],
+      ["review", "Review", "notes"],
     ],
     service_groups: [
-      ["name", "Name"], ["members", "Members"], ["generated", "Generated"],
-      ["review", "Review"],
+      ["name", "Name"], ["members", "Members"], ["generated", "Generated", "compact"],
+      ["review", "Review", "notes"],
     ],
     policies: [
-      ["policy_id", "ID"], ["name", "Name"], ["source_interfaces", "Source"],
+      ["policy_id", "ID", "compact"], ["name", "Name"], ["source_interfaces", "Source"],
       ["destination_interfaces", "Destination"], ["services", "Service"],
-      ["action", "Action"], ["nat", "NAT"], ["review", "Review"],
+      ["action", "Action", "compact"], ["nat", "NAT", "compact"], ["review", "Review", "notes"],
     ],
     nat: [
-      ["policy_id", "Policy ID"], ["policy_name", "Policy"],
-      ["translation_type", "Type"], ["translated_addresses", "Address"],
-      ["egress_interfaces", "Egress"], ["review", "Review"],
+      ["policy_id", "Policy ID", "compact"], ["policy_name", "Policy"],
+      ["translation_type", "Type", "compact"], ["translated_addresses", "Address", "address"],
+      ["egress_interfaces", "Egress"], ["review", "Review", "notes"],
     ],
     routes: [
-      ["route_id", "ID"], ["destination", "Destination"], ["gateway", "Gateway"],
-      ["device", "Device"], ["distance", "Distance"], ["status", "Status"],
-      ["review", "Review"],
+      ["route_id", "ID", "compact"], ["destination", "Destination", "address"], ["gateway", "Gateway", "address"],
+      ["device", "Device"], ["distance", "Distance", "compact"], ["status", "Status", "compact"],
+      ["review", "Review", "notes"],
     ],
     vpn: [
-      ["kind", "Type"], ["name", "Name"], ["attachment", "Interface / Phase 1"],
-      ["peer", "Gateway / Selectors"], ["crypto", "IKE / Proposal"],
-      ["topology", "Topology"], ["review", "Review"],
+      ["kind", "Type", "compact"], ["name", "Name"], ["attachment", "Interface / Phase 1"],
+      ["peer", "Gateway / Selectors", "address"], ["crypto", "IKE / Proposal"],
+      ["topology", "Topology"], ["review", "Review", "notes"],
     ],
     validation: [
-      ["severity", "Severity"], ["domain", "Domain"], ["object_name", "Object"],
-      ["field", "Field"], ["message", "Issue"],
+      ["severity", "Severity", "compact"], ["domain", "Domain"], ["object_name", "Object"],
+      ["field", "Field"], ["message", "Issue", "notes"],
     ],
   };
 
@@ -200,7 +206,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const search = reportSearch?.value.trim().toLowerCase() || "";
     const vdom = reportVdomFilter?.value || "";
     const severity = reportSeverityFilter?.value || "";
-    const rows = reportRows(activeReportSection).filter((row) => {
+    const sectionRows = reportRows(activeReportSection);
+    const rows = sectionRows.filter((row) => {
       if (vdom && row.vdom !== vdom) return false;
       if (severity && row.severity !== severity) return false;
       return !search || Object.values(row).some((value) =>
@@ -208,10 +215,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     const headRow = document.createElement("tr");
-    columns.forEach(([, label]) => {
+    columns.forEach(([key, label, layout = "text"]) => {
       const th = document.createElement("th");
       th.scope = "col";
       th.textContent = label;
+      th.dataset.column = key;
+      th.className = `report-cell-${layout}`;
       headRow.appendChild(th);
     });
     reportTableHead?.replaceChildren(headRow);
@@ -219,18 +228,48 @@ document.addEventListener("DOMContentLoaded", () => {
     const fragment = document.createDocumentFragment();
     rows.forEach((row) => {
       const tr = document.createElement("tr");
-      columns.forEach(([key]) => {
+      columns.forEach(([key, , layout = "text"]) => {
         const td = document.createElement("td");
+        td.dataset.column = key;
+        td.className = `report-cell-${layout}`;
         td.textContent = formatCell(row[key]);
-        if (columnKey === "interfaces" && key === "display_name") {
-          td.className = "report-topology-name";
+        if (columnKey === "interfaces" && key === "ip") {
+          // Keep each address/mask token intact on its own line.
+          td.textContent = formatCell(row[key]).replace(/\s+/g, "\n");
         }
         tr.appendChild(td);
       });
       fragment.appendChild(tr);
     });
     reportTableBody?.replaceChildren(fragment);
+    if (reportTable) reportTable.dataset.section = columnKey;
+    const sectionLabel = document.querySelector(
+      activeReportSection === "objects"
+        ? `[data-object-section="${activeObjectSection}"]`
+        : `[data-report-section="${activeReportSection}"]`,
+    )?.textContent.trim() || "Configuration";
+    if (reportTableCaption) reportTableCaption.textContent = `${sectionLabel} report`;
+    if (reportRowCount) {
+      reportRowCount.textContent = `${rows.length} of ${sectionRows.length} ${sectionRows.length === 1 ? "row" : "rows"}`;
+    }
+    reportTableWrap?.classList.toggle("hidden", rows.length === 0);
     reportEmpty?.classList.toggle("hidden", rows.length > 0);
+    requestAnimationFrame(syncTableOverflow);
+  }
+
+  function syncTableOverflow() {
+    if (!reportTableWrap) return;
+    const overflowing = reportTableWrap.clientWidth > 0 &&
+      reportTableWrap.scrollWidth > reportTableWrap.clientWidth + 1;
+    reportScrollHint?.classList.toggle("hidden", !overflowing);
+  }
+
+  if (window.ResizeObserver && reportTableWrap && reportTable) {
+    const tableResizeObserver = new ResizeObserver(syncTableOverflow);
+    tableResizeObserver.observe(reportTableWrap);
+    tableResizeObserver.observe(reportTable);
+  } else {
+    window.addEventListener("resize", syncTableOverflow);
   }
 
   function renderOverview() {
